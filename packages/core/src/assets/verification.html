@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Easy-Share - 文件接收</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      padding: 40px;
+      max-width: 400px;
+      width: 100%;
+      text-align: center;
+    }
+    h1 {
+      color: #333;
+      font-size: 28px;
+      margin-bottom: 10px;
+    }
+    .subtitle {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 30px;
+    }
+    .file-info {
+      background: #f7f9fc;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 30px;
+      text-align: left;
+    }
+    .file-info-item {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+    .file-info-item:last-child {
+      margin-bottom: 0;
+    }
+    .file-info-label {
+      color: #666;
+      font-weight: 500;
+    }
+    .file-info-value {
+      color: #333;
+      font-weight: 600;
+    }
+    .verification-section {
+      margin-bottom: 20px;
+    }
+    .verification-label {
+      display: block;
+      color: #333;
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 15px;
+    }
+    .code-input {
+      width: 100%;
+      padding: 15px;
+      font-size: 24px;
+      text-align: center;
+      letter-spacing: 8px;
+      border: 2px solid #e0e0e0;
+      border-radius: 12px;
+      outline: none;
+      transition: border-color 0.3s;
+      font-family: 'Courier New', monospace;
+    }
+    .code-input:focus {
+      border-color: #667eea;
+    }
+    .verify-btn {
+      width: 100%;
+      padding: 15px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s, opacity 0.3s;
+      margin-top: 10px;
+    }
+    .verify-btn:hover {
+      transform: translateY(-2px);
+    }
+    .verify-btn:active {
+      transform: translateY(0);
+    }
+    .verify-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .message {
+      margin-top: 20px;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      display: none;
+    }
+    .message.success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .message.error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    .progress-section {
+      display: none;
+      margin-top: 20px;
+    }
+    .progress-title {
+      color: #333;
+      margin-bottom: 10px;
+      font-weight: 600;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background: #e0e0e0;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+    .progress-text {
+      font-size: 12px;
+      color: #666;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📥 Easy-Share</h1>
+    <p class="subtitle">安全文件传输</p>
+    
+    <div class="file-info" id="fileInfo">
+      <div class="file-info-item">
+        <span class="file-info-label">📄 文件名称</span>
+        <span class="file-info-value" id="fileName">加载中...</span>
+      </div>
+      <div class="file-info-item">
+        <span class="file-info-label">📦 文件大小</span>
+        <span class="file-info-value" id="fileSize">加载中...</span>
+      </div>
+    </div>
+
+    <div class="verification-section" id="verificationSection">
+      <label class="verification-label">请输入 6 位验证码</label>
+      <input 
+        type="text" 
+        class="code-input" 
+        id="codeInput" 
+        maxlength="6" 
+        placeholder="000000"
+        autocomplete="off"
+      />
+      <button class="verify-btn" id="verifyBtn" onclick="verifyCode()">
+        验证并下载
+      </button>
+    </div>
+
+    <div class="message" id="message"></div>
+    
+    <div class="progress-section" id="progressSection">
+      <p class="progress-title">正在下载...</p>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-text" id="progressText">0%</div>
+    </div>
+  </div>
+
+  <script>
+    let sessionToken = '';
+    let downloadStarted = false;
+    
+    // Load file info on page load
+    window.addEventListener('DOMContentLoaded', loadFileInfo);
+
+    async function loadFileInfo() {
+      try {
+        const response = await fetch('/files');
+        const files = await response.json();
+        if (files && files.length > 0) {
+          const file = files[0];
+          document.getElementById('fileName').textContent = file.name;
+          document.getElementById('fileSize').textContent = formatBytes(file.size);
+        }
+      } catch (error) {
+        console.error('Failed to load file info:', error);
+        showMessage('无法加载文件信息', 'error');
+      }
+    }
+
+    async function verifyCode() {
+      const codeInput = document.getElementById('codeInput');
+      const code = codeInput.value.trim();
+      
+      if (code.length !== 6 || !/^\d{6}$/.test(code)) {
+        showMessage('请输入 6 位数字验证码', 'error');
+        return;
+      }
+
+      const verifyBtn = document.getElementById('verifyBtn');
+      verifyBtn.disabled = true;
+      verifyBtn.textContent = '验证中...';
+
+      try {
+        const response = await fetch('/verify', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ code })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          sessionToken = result.sessionToken;
+          showMessage('验证成功! 正在准备下载...', 'success');
+          document.getElementById('verificationSection').style.display = 'none';
+          
+          // Auto download after successful verification
+          setTimeout(() => {
+            downloadFiles();
+          }, 1000);
+        } else {
+          showMessage(result.message || '验证码错误，请重试', 'error');
+          verifyBtn.disabled = false;
+          verifyBtn.textContent = '验证并下载';
+          codeInput.value = '';
+          codeInput.focus();
+        }
+      } catch (error) {
+        showMessage('验证失败，请重试', 'error');
+        verifyBtn.disabled = false;
+        verifyBtn.textContent = '验证并下载';
+      }
+    }
+
+    async function downloadFiles() {
+      try {
+        const response = await fetch('/files');
+        const files = await response.json();
+        
+        if (!files || files.length === 0) {
+          showMessage('没有可用的文件', 'error');
+          return;
+        }
+
+        downloadStarted = true;
+        document.getElementById('progressSection').style.display = 'block';
+        document.getElementById('message').style.display = 'none';
+
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          await downloadFile(file);
+        }
+        
+        showMessage('✓ 下载完成!', 'success');
+      } catch (error) {
+        showMessage('下载失败: ' + error.message, 'error');
+      }
+    }
+
+    function downloadFile(file) {
+      return new Promise((resolve) => {
+        const link = document.createElement('a');
+        link.href = '/' + file.id + '?token=' + sessionToken;
+        link.download = file.name;
+        
+        // Track download progress
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', link.href, true);
+        
+        xhr.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percentComplete = (event.loaded / event.total) * 100;
+            updateProgress(percentComplete);
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status === 200) {
+            // Download via blob
+            const blob = new Blob([xhr.response], { type: file.mimeType });
+            const blobUrl = URL.createObjectURL(blob);
+            link.href = blobUrl;
+            link.click();
+            URL.revokeObjectURL(blobUrl);
+            updateProgress(100);
+            setTimeout(resolve, 500);
+          } else {
+            showMessage('下载失败: ' + xhr.statusText, 'error');
+            resolve();
+          }
+        };
+
+        xhr.onerror = () => {
+          showMessage('下载错误', 'error');
+          resolve();
+        };
+
+        xhr.responseType = 'arraybuffer';
+        xhr.send();
+      });
+    }
+
+    function updateProgress(percent) {
+      document.getElementById('progressFill').style.width = percent + '%';
+      document.getElementById('progressText').textContent = Math.round(percent) + '%';
+    }
+
+    function showMessage(text, type) {
+      const message = document.getElementById('message');
+      message.textContent = text;
+      message.className = 'message ' + type;
+      message.style.display = 'block';
+    }
+
+    function formatBytes(bytes) {
+      if (bytes === 0) return '0 Bytes';
+      const k = 1024;
+      const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    // Auto-focus on input
+    setTimeout(() => {
+      const input = document.getElementById('codeInput');
+      if (input) input.focus();
+    }, 100);
+    
+    // Allow Enter key to submit
+    document.getElementById('codeInput').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        verifyCode();
+      }
+    });
+  </script>
+</body>
+</html>

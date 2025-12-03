@@ -1,0 +1,45 @@
+{
+  "name": "easy-share",
+  "version": "1.0.0",
+  "description": "Easy-Share CLI - Cross-platform file transfer tool",
+  "main": "dist/index.js",
+  "bin": {
+    "easy-share": "./bin/run.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx src/index.ts",
+    "clean": "rimraf dist *.tsbuildinfo",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@easy-share/core": "workspace:*",
+    "@oclif/core": "^3.15.1",
+    "@oclif/plugin-help": "^6.0.9",
+    "chalk": "^4.1.2",
+    "ora": "^5.4.1",
+    "prompts": "^2.4.2",
+    "cli-progress": "^3.12.0",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/cli-progress": "^3.11.5",
+    "@types/prompts": "^2.4.9",
+    "tsx": "^4.7.0",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.3.2"
+  },
+  "keywords": [
+    "cli",
+    "file-transfer",
+    "p2p"
+  ],
+  "author": "Easy-Share Team",
+  "license": "MIT",
+  "oclif": {
+    "bin": "easy-share",
+    "dirname": "easy-share",
+    "commands": "./dist/commands",
+    "topicSeparator": " "
+  }
+}

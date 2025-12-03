@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+pnpm-lock.yaml
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+build/
+out/
+.turbo/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Testing
+coverage/
+.nyc_output/
+
+# Runtime
+downloads/
+temp/
+tmp/
+*.log
+
+# Docker
+.docker/
+.dockerignore
+
+# App specific
+dist-cli/
+dist-gui/
