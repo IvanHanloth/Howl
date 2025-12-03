@@ -12,7 +12,7 @@ export class LanDiscovery extends EventEmitter {
   private browser?: ReturnType<Bonjour['find']>;
   private discoveredServices: Map<string, ServiceInfo> = new Map();
 
-  private static readonly SERVICE_TYPE = 'easysend';
+  private static readonly SERVICE_TYPE = 'howl-share';
   private static readonly PROTOCOL = 'tcp';
 
   constructor() {
@@ -35,12 +35,15 @@ export class LanDiscovery extends EventEmitter {
       ...metadata,
     };
 
+    // Enhanced configuration for better cross-platform compatibility
     this.publishedService = this.bonjour.publish({
       name: `${LanDiscovery.SERVICE_TYPE}-${peerId}`,
       type: LanDiscovery.SERVICE_TYPE,
       protocol: LanDiscovery.PROTOCOL,
       port,
       txt,
+      // Probe for existing services to avoid conflicts
+      probe: true,
     });
 
     this.publishedService.on('up', () => {
@@ -63,6 +66,7 @@ export class LanDiscovery extends EventEmitter {
     }
 
     console.log('[Discovery] Starting service discovery...');
+    // Enhanced configuration for better cross-platform discovery
     this.browser = this.bonjour.find({
       type: LanDiscovery.SERVICE_TYPE,
       protocol: LanDiscovery.PROTOCOL,
