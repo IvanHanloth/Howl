@@ -142,8 +142,8 @@ export default class Receive extends Command {
     services: Map<string, ServiceInfo>,
     outputDir: string
   ): Promise<void> {
-    const showMenu = async (): Promise<ServiceInfo | null> => {
-      this.log(chalk.green(`\n‚ú?Found ${services.size} sender(s)\n`));
+    const showMenu = async (): Promise<ServiceInfo | 'RESEARCH' | null> => {
+      this.log(chalk.green(`\nÔøΩ?Found ${services.size} sender(s)\n`));
 
       // Let user select a sender
       const serviceArray = Array.from(services.values());
@@ -155,11 +155,18 @@ export default class Receive extends Command {
         value: service,
       }));
 
+      // Add a special "Search again" option at the end
+      choices.push({
+        title: chalk.cyan('üîç Search for more senders (5 seconds)'),
+        description: 'Continue searching for additional devices',
+        value: 'RESEARCH' as any,
+      });
+
       this.log(chalk.cyan('üìã Instructions:'));
-      this.log(chalk.gray('  ‚Ä?Use ‚Ü?and ‚Ü?arrow keys to move'));
-      this.log(chalk.gray('  ‚Ä?Press Enter to select'));
-      this.log(chalk.gray('  ‚Ä?Press R to search for 5 more seconds'));
-      this.log(chalk.gray('  ‚Ä?Press Ctrl+C to cancel\n'));
+      this.log(chalk.gray('  Use ‚Üë and ‚Üì arrow keys to move'));
+      this.log(chalk.gray('  Press Enter to select'));
+      this.log(chalk.gray('  Select "Search for more senders" to continue searching'));
+      this.log(chalk.gray('  Press Ctrl+C to cancel\n'));
 
       const response = await prompts({
         type: 'select',
@@ -176,13 +183,39 @@ export default class Receive extends Command {
     let knownServiceIds = new Set(services.keys());
 
     while (!selectedService) {
-      selectedService = await showMenu();
+      const result = await showMenu();
 
-      if (selectedService) {
+      // Check if user wants to research
+      if (result === 'RESEARCH') {
+        // Re-search for 5 seconds
+        this.log(chalk.cyan('\nüîç Searching for 5 seconds...\n'));
+        await this.researchForSenders(services, knownServiceIds);
+        
+        if (services.size === 0) {
+          this.log(chalk.yellow('No senders found on local network.'));
+          const continueSearching = await prompts({
+            type: 'confirm',
+            name: 'continue',
+            message: 'Continue searching?',
+            initial: true,
+          });
+
+          if (!continueSearching.continue) {
+            discovery.destroy();
+            process.exit(0);
+          }
+        } else {
+          knownServiceIds = new Set(services.keys());
+        }
+        continue;
+      }
+
+      if (result) {
+        selectedService = result as ServiceInfo;
         break;
       }
 
-      // User cancelled, ask if they want to search again
+      // User cancelled (pressed Ctrl+C or ESC)
       this.log(chalk.yellow('\nNo sender selected.\n'));
 
       const researchResponse = await prompts({
@@ -396,7 +429,7 @@ export default class Receive extends Command {
       if (progressStarted) {
         progressBar.stop();
       }
-      this.log(chalk.green('\n‚ú?Download completed!'));
+      this.log(chalk.green('\nÔøΩ?Download completed!'));
       this.log(chalk.gray(`Saved to: ${outputPath}`));
     } catch (error) {
       if (progressStarted) {
