@@ -9,7 +9,7 @@ import {
   LanSender,
   generatePeerId,
   FileMetadata,
-} from '@easy-share/core';
+} from '@howl/core';
 
 /**
  * Send command - Send files via LAN or P2P
@@ -75,7 +75,7 @@ export default class Send extends Command {
     // Determine transfer mode
     const mode = flags.lan ? 'lan' : flags.mode;
 
-    this.log(chalk.cyan('🚀 Easy-Share - File Transfer\n'));
+    this.log(chalk.cyan('🚀 howl - File Transfer\n'));
     this.log(chalk.gray(`File: ${path.basename(filePath)}`));
     this.log(chalk.gray(`Size: ${this.formatBytes(stat.size)}`));
     this.log(chalk.gray(`Mode: ${mode}\n`));
@@ -141,23 +141,23 @@ export default class Send extends Command {
 
       spinner.succeed('Broadcasting on local network');
 
-      this.log(chalk.green('\n✓ Ready to receive connections'));
+      this.log(chalk.green('\n🚀 Ready to receive connections'));
       this.log(chalk.gray('Waiting for receivers...\n'));
       
       // Display verification code prominently (if verification is enabled)
       if (!noVerification) {
-        this.log(chalk.cyan('═'.repeat(50)));
+        this.log(chalk.cyan('='.repeat(50)));
         this.log(chalk.cyan.bold('\n  🔐 Verification Code: ') + chalk.yellow.bold(verificationCode) + '\n');
-        this.log(chalk.cyan('═'.repeat(50)));
+        this.log(chalk.cyan('='.repeat(50)));
         
         this.log(chalk.cyan('\n📱 Receivers can connect via:'));
-        this.log(chalk.white(`   • CLI: Select this device and enter code ${chalk.bold(verificationCode)}`));
-        this.log(chalk.white(`   • Web: Open ${chalk.bold.underline(`http://localhost:${actualPort}`)} and enter code`));
+        this.log(chalk.white(`   ⌨️ CLI: Select this device and enter code ${chalk.bold(verificationCode)}`));
+        this.log(chalk.white(`   🌐 Web: Open ${chalk.bold.underline(`http://localhost:${actualPort}`)} and enter code`));
       } else {
-        this.log(chalk.yellow('\n⚠ Verification is DISABLED - Direct access allowed'));
+        this.log(chalk.yellow('\n🔓 Verification is DISABLED - Direct access allowed'));
         this.log(chalk.cyan('\n📱 Receivers can connect via:'));
-        this.log(chalk.white(`   • CLI: Select this device (no code required)`));
-        this.log(chalk.white(`   • Web: Open ${chalk.bold.underline(`http://localhost:${actualPort}/${fileMetadata.name}`)} to download directly`));
+        this.log(chalk.white(`   ⌨️ CLI: Select this device (no code required)`));
+        this.log(chalk.white(`   🌐 Web: Open ${chalk.bold.underline(`http://localhost:${actualPort}/${fileMetadata.name}`)} to download directly`));
       }
       
       // Get local IP addresses
@@ -174,7 +174,7 @@ export default class Send extends Command {
       if (localIPs.length > 0) {
         this.log(chalk.gray(`\n📡 Local network URLs:`));
         for (const ip of localIPs) {
-          this.log(chalk.gray(`   • http://${ip}:${actualPort}`));
+          this.log(chalk.gray(`   🌐 http://${ip}:${actualPort}`));
         }
       }
       
@@ -223,7 +223,7 @@ export default class Send extends Command {
       // Verification successful handler
       sender.on('verified', (data: any) => {
         try {
-          this.log(chalk.green(`✓ Verification successful from ${data.clientIp}`));
+          this.log(chalk.green(`✅ Verification successful from ${data.clientIp}`));
         } catch (err) {
           console.error('[Send] Error in verified handler:', err);
         }
@@ -232,7 +232,7 @@ export default class Send extends Command {
       // Verification failed handler
       sender.on('verification-failed', (data: any) => {
         try {
-          this.log(chalk.red(`✗ Verification failed from ${data.clientIp} (invalid code)`));
+          this.log(chalk.red(`❌ Verification failed from ${data.clientIp} (invalid code)`));
         } catch (err) {
           console.error('[Send] Error in verification-failed handler:', err);
         }
@@ -241,7 +241,7 @@ export default class Send extends Command {
       // Verification required handler
       sender.on('verification-required', (data: any) => {
         try {
-          this.log(chalk.yellow(`⚠ Verification required for ${data.clientIp} (${data.transferType})`));
+          this.log(chalk.yellow(`🔒 Verification required for ${data.clientIp} (${data.transferType})`));
         } catch (err) {
           console.error('[Send] Error in verification-required handler:', err);
         }
@@ -280,7 +280,7 @@ export default class Send extends Command {
             progressBar.stop();
             progressStarted = false;
           }
-          this.log(chalk.green(`\n✓ Transfer completed! (${data.downloadCount}/${data.maxDownloads})`));
+          this.log(chalk.green(`\n✅ Transfer completed! (${data.downloadCount}/${data.maxDownloads})`));
           this.log(chalk.gray(`   Client: ${data.clientIp} | Type: ${data.transferType}`));
         } catch (err) {
           console.error('[Send] Error in transfer-completed handler:', err);
@@ -289,7 +289,7 @@ export default class Send extends Command {
 
       sender.on('download-limit-reached', (data: any) => {
         try {
-          this.log(chalk.yellow(`\n⚠ Download limit reached (${data.currentCount}/${data.maxDownloads}). Shutting down...`));
+          this.log(chalk.yellow(`\n🔔 Download limit reached (${data.currentCount}/${data.maxDownloads}). Shutting down...`));
           sender.stop().then(() => {
             discovery.destroy();
             if (progressStarted && progressBar) {
@@ -310,7 +310,7 @@ export default class Send extends Command {
         if (progressStarted && progressBar) {
           progressBar.stop();
         }
-        this.log(chalk.green('\n✓ Transfer completed!'));
+        this.log(chalk.green('\n✅ Transfer completed!'));
       });
 
       // Keep process alive

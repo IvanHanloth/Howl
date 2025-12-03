@@ -1,7 +1,7 @@
 {
-  "name": "@easy-share/core",
+  "name": "@howl/core",
   "version": "1.0.0",
-  "description": "Core library for Easy-Share file transfer",
+  "description": "Core library for Howl file transfer",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -35,6 +35,6 @@
     "mdns",
     "webrtc"
   ],
-  "author": "Easy-Share Team",
+  "author": "Howl Team",
   "license": "MIT"
 }

@@ -10,7 +10,7 @@ import {
   LanReceiver,
   ServiceInfo,
   TransferProgress,
-} from '@easy-share/core';
+} from '@howl/core';
 
 /**
  * Receive command - Receive files from another device
@@ -52,7 +52,7 @@ export default class Receive extends Command {
       fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    this.log(chalk.cyan('ðŸ“¥ Easy-Share - File Receiver\n'));
+    this.log(chalk.cyan('ðŸ“¥ howl - File Receiver\n'));
 
     if (args.code) {
       await this.receiveViaWan(args.code as string, outputDir);
@@ -143,7 +143,7 @@ export default class Receive extends Command {
     outputDir: string
   ): Promise<void> {
     const showMenu = async (): Promise<ServiceInfo | null> => {
-      this.log(chalk.green(`\nâœ“ Found ${services.size} sender(s)\n`));
+      this.log(chalk.green(`\nâœ?Found ${services.size} sender(s)\n`));
 
       // Let user select a sender
       const serviceArray = Array.from(services.values());
@@ -156,10 +156,10 @@ export default class Receive extends Command {
       }));
 
       this.log(chalk.cyan('ðŸ“‹ Instructions:'));
-      this.log(chalk.gray('  â€¢ Use â†‘ and â†“ arrow keys to move'));
-      this.log(chalk.gray('  â€¢ Press Enter to select'));
-      this.log(chalk.gray('  â€¢ Press R to search for 5 more seconds'));
-      this.log(chalk.gray('  â€¢ Press Ctrl+C to cancel\n'));
+      this.log(chalk.gray('  â€?Use â†?and â†?arrow keys to move'));
+      this.log(chalk.gray('  â€?Press Enter to select'));
+      this.log(chalk.gray('  â€?Press R to search for 5 more seconds'));
+      this.log(chalk.gray('  â€?Press Ctrl+C to cancel\n'));
 
       const response = await prompts({
         type: 'select',
@@ -396,7 +396,7 @@ export default class Receive extends Command {
       if (progressStarted) {
         progressBar.stop();
       }
-      this.log(chalk.green('\nâœ“ Download completed!'));
+      this.log(chalk.green('\nâœ?Download completed!'));
       this.log(chalk.gray(`Saved to: ${outputPath}`));
     } catch (error) {
       if (progressStarted) {

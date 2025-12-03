@@ -1,5 +1,5 @@
 /**
- * Core type definitions and interfaces for Easy-Share
+ * Core type definitions and interfaces for Howl
  */
 
 /** Transfer mode */

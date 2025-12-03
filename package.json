@@ -1,5 +1,5 @@
 {
-  "name": "easy-share-next",
+  "name": "howl",
   "version": "1.0.0",
   "description": "Cross-platform serverless file transfer tool with LAN discovery and P2P support",
   "private": true,
@@ -10,7 +10,7 @@
     "mdns",
     "lan-discovery"
   ],
-  "author": "Easy-Share Team",
+  "author": "Howl Team",
   "license": "MIT",
   "engines": {
     "node": ">=18.0.0",

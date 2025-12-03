@@ -1,10 +1,10 @@
 {
-  "name": "easy-share",
+  "name": "howl",
   "version": "1.0.0",
-  "description": "Easy-Share CLI - Cross-platform file transfer tool",
+  "description": "Howl CLI - Cross-platform file transfer tool",
   "main": "dist/index.js",
   "bin": {
-    "easy-share": "./bin/run.js"
+    "howl": "./bin/run.js"
   },
   "scripts": {
     "build": "tsc -b",
@@ -13,7 +13,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@easy-share/core": "workspace:*",
+    "@howl/core": "workspace:*",
     "@oclif/core": "^3.15.1",
     "@oclif/plugin-help": "^6.0.9",
     "chalk": "^4.1.2",
@@ -34,11 +34,11 @@
     "file-transfer",
     "p2p"
   ],
-  "author": "Easy-Share Team",
+  "author": "Howl Team",
   "license": "MIT",
   "oclif": {
-    "bin": "easy-share",
-    "dirname": "easy-share",
+    "bin": "howl",
+    "dirname": "howl",
     "commands": "./dist/commands",
     "topicSeparator": " "
   }

@@ -154,10 +154,10 @@ export class LanSender extends EventEmitter {
     let transferType = 'unknown';
     let requiresVerification = this.requireVerification;
     
-    if (userAgent.includes('easy-share-cli')) {
+    if (userAgent.includes('howl-cli')) {
       transferType = 'CLI';
       // CLI doesn't need verification by default
-    } else if (userAgent.includes('easy-share-client')) {
+    } else if (userAgent.includes('howl-client')) {
       transferType = 'Client';
       // Client apps need verification if enabled
     } else {
