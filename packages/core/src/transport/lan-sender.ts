@@ -92,10 +92,11 @@ export class LanSender extends EventEmitter {
 
       this.server.on('error', reject);
 
-      this.server.listen(this.defaultPort, () => {
+      // Bind to 0.0.0.0 to allow LAN access (not just localhost)
+      this.server.listen(this.defaultPort, '0.0.0.0', () => {
         const addr = this.server?.address();
         this.port = typeof addr === 'object' && addr ? addr.port : 0;
-        console.log(`[LanSender] HTTP server started on port ${this.port}`);
+        console.log(`[LanSender] HTTP server started on 0.0.0.0:${this.port}`);
         this.emit('started', this.port);
         resolve(this.port);
       });

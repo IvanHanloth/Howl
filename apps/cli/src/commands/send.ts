@@ -9,6 +9,7 @@ import {
   LanSender,
   generatePeerId,
   FileMetadata,
+  FirewallHelper,
 } from '@howl/core';
 
 /**
@@ -34,7 +35,7 @@ export default class Send extends Command {
       default: 'auto',
     }),
     port: Flags.integer({
-      description: 'Port for HTTP server (LAN mode)',
+      description: 'Port for HTTP server (default: 40000 or next available, can specify any port)',
       default: 0,
     }),
     name: Flags.string({
@@ -47,6 +48,10 @@ export default class Send extends Command {
     }),
     'no-verification': Flags.boolean({
       description: 'Disable verification code requirement (allows direct access)',
+      default: false,
+    }),
+    'skip-firewall': Flags.boolean({
+      description: 'Skip automatic firewall configuration (Windows only)',
       default: false,
     }),
   };
@@ -81,10 +86,10 @@ export default class Send extends Command {
     this.log(chalk.gray(`Mode: ${mode}\n`));
 
     if (mode === 'lan' || mode === 'auto') {
-      await this.sendViaLan(filePath, stat.size, flags.port, flags.name, flags.downloads, flags['no-verification']);
+      await this.sendViaLan(filePath, stat.size, flags.port, flags.name, flags.downloads, flags['no-verification'], flags['skip-firewall']);
     } else {
       this.log(chalk.yellow('WAN mode not yet implemented. Using LAN mode...'));
-      await this.sendViaLan(filePath, stat.size, flags.port, flags.name, flags.downloads, flags['no-verification']);
+      await this.sendViaLan(filePath, stat.size, flags.port, flags.name, flags.downloads, flags['no-verification'], flags['skip-firewall']);
     }
   }
 
@@ -94,10 +99,11 @@ export default class Send extends Command {
   private async sendViaLan(
     filePath: string,
     fileSize: number,
-    port: number,
+    requestedPort: number,
     deviceName: string,
     maxDownloads: number,
-    noVerification: boolean = false
+    noVerification: boolean = false,
+    skipFirewall: boolean = false
   ): Promise<void> {
     const peerId = generatePeerId();
     const fileId = path.basename(filePath);
@@ -109,9 +115,78 @@ export default class Send extends Command {
       path: filePath,
     };
 
+    let spinner = ora('Preparing to start...').start();
+
+    // Find available port first
+    spinner.text = 'Finding available port...';
+    let actualPort: number;
+    try {
+      actualPort = await FirewallHelper.findAvailablePort(requestedPort || undefined);
+      spinner.succeed(`Found available port: ${actualPort}`);
+    } catch (error) {
+      spinner.fail('Port not available');
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.error(chalk.red(message));
+      return;
+    }
+
+    // Windows Firewall handling - check and add rule BEFORE starting server
+    if (!skipFirewall && FirewallHelper.isWindows()) {
+      spinner = ora('Checking Windows Firewall...').start();
+
+      const firewallEnabled = await FirewallHelper.isFirewallEnabled();
+      
+      if (firewallEnabled) {
+        const portRange = FirewallHelper.getPortRange();
+        const isInRange = actualPort >= portRange.start && actualPort <= portRange.end;
+        
+        // Check if port is already allowed
+        const isAllowed = await FirewallHelper.isPortAllowed(actualPort);
+        
+        if (!isAllowed) {
+          spinner.info('Windows Firewall detected - need to add firewall rule');
+          
+          this.log(chalk.yellow('\n⚠️  Windows Firewall may block connections from other devices.'));
+          
+          if (isInRange) {
+            this.log(chalk.cyan(`🔓 Attempting to add firewall rule for ports ${portRange.start}-${portRange.end}...`));
+          } else {
+            this.log(chalk.cyan(`🔓 Attempting to add firewall rule for port ${actualPort}...`));
+          }
+          
+          this.log(chalk.gray('   (You will see a UAC permission dialog)\n'));
+          
+          const result = isInRange 
+            ? await FirewallHelper.addRule()
+            : await FirewallHelper.addRuleForPort(actualPort);
+          
+          if (result.success) {
+            this.log(chalk.green('✅ ' + result.message + '\n'));
+          } else {
+            this.log(chalk.yellow('⚠️  ' + result.message));
+            
+            if (result.message.includes('cancelled')) {
+              this.log(chalk.yellow('\n⚠️  Firewall rule not added. Other devices may not be able to connect.'));
+              this.log(chalk.cyan('💡 You can manually add the firewall rule later:'));
+              this.log(chalk.gray(FirewallHelper.getManualInstructions()));
+              this.log(chalk.gray('\nContinuing without firewall rule...\n'));
+            } else {
+              this.log(chalk.cyan('\n💡 To allow connections from other devices:'));
+              this.log(chalk.gray(FirewallHelper.getManualInstructions()));
+              this.log(chalk.gray('\nContinuing without firewall rule...\n'));
+            }
+          }
+        } else {
+          spinner.succeed(`Firewall rule already exists for port ${actualPort}`);
+        }
+      } else {
+        spinner.succeed('Windows Firewall is disabled');
+      }
+    }
+
     // Start HTTP server
-    const spinner = ora('Starting HTTP server...').start();
-    const sender = new LanSender(port);
+    spinner = ora('Starting HTTP server...').start();
+    const sender = new LanSender(actualPort);
     const discovery = new LanDiscovery();
     
     // Set download limit
@@ -124,8 +199,8 @@ export default class Send extends Command {
     let progressStarted = false;
 
     try {
-      const actualPort = await sender.start(fileMetadata);
-      spinner.succeed(`HTTP server started on port ${actualPort}`);
+      const serverPort = await sender.start(fileMetadata);
+      spinner.succeed(`HTTP server started on 0.0.0.0:${serverPort}`);
 
       // Get verification code
       const verificationCode = sender.getVerificationCode();
@@ -134,7 +209,7 @@ export default class Send extends Command {
       spinner.text = 'Advertising on local network...';
       spinner.start();
 
-      discovery.advertise(peerId, deviceName, actualPort, {
+      discovery.advertise(peerId, deviceName, serverPort, {
         fileName: fileMetadata.name,
         fileSize: fileSize.toString(),
       });
@@ -152,12 +227,12 @@ export default class Send extends Command {
         
         this.log(chalk.cyan('\n📱 Receivers can connect via:'));
         this.log(chalk.white(`   ⌨️ CLI: Select this device and enter code ${chalk.bold(verificationCode)}`));
-        this.log(chalk.white(`   🌐 Web: Open ${chalk.bold.underline(`http://localhost:${actualPort}`)} and enter code`));
+        this.log(chalk.white(`   🌐 Web: Open ${chalk.bold.underline(`http://localhost:${serverPort}`)} and enter code`));
       } else {
         this.log(chalk.yellow('\n🔓 Verification is DISABLED - Direct access allowed'));
         this.log(chalk.cyan('\n📱 Receivers can connect via:'));
         this.log(chalk.white(`   ⌨️ CLI: Select this device (no code required)`));
-        this.log(chalk.white(`   🌐 Web: Open ${chalk.bold.underline(`http://localhost:${actualPort}/${fileMetadata.name}`)} to download directly`));
+        this.log(chalk.white(`   🌐 Web: Open ${chalk.bold.underline(`http://localhost:${serverPort}/${fileMetadata.name}`)} to download directly`));
       }
       
       // Get local IP addresses
@@ -174,7 +249,7 @@ export default class Send extends Command {
       if (localIPs.length > 0) {
         this.log(chalk.gray(`\n📡 Local network URLs:`));
         for (const ip of localIPs) {
-          this.log(chalk.gray(`   🌐 http://${ip}:${actualPort}`));
+          this.log(chalk.gray(`   🌐 http://${ip}:${serverPort}`));
         }
       }
       

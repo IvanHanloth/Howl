@@ -17,6 +17,7 @@
     "bonjour-service": "^1.2.1",
     "simple-peer": "^9.11.1",
     "socket.io-client": "^4.7.2",
+    "sudo-prompt": "^9.2.1",
     "uuid": "^9.0.1"
   },
   "devDependencies": {
