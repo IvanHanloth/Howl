@@ -12,7 +12,7 @@ export class LanDiscovery extends EventEmitter {
   private browser?: ReturnType<Bonjour['find']>;
   private discoveredServices: Map<string, ServiceInfo> = new Map();
 
-  private static readonly SERVICE_TYPE = 'howl-share';
+  private static readonly SERVICE_NAME = 'howl-share';
   private static readonly PROTOCOL = 'tcp';
 
   constructor() {
@@ -37,8 +37,8 @@ export class LanDiscovery extends EventEmitter {
 
     // Enhanced configuration for better cross-platform compatibility
     this.publishedService = this.bonjour.publish({
-      name: `${LanDiscovery.SERVICE_TYPE}-${peerId}`,
-      type: LanDiscovery.SERVICE_TYPE,
+      name: `${LanDiscovery.SERVICE_NAME}-${peerId}`,
+      type: LanDiscovery.SERVICE_NAME,
       protocol: LanDiscovery.PROTOCOL,
       port,
       txt,
@@ -68,7 +68,7 @@ export class LanDiscovery extends EventEmitter {
     console.log('[Discovery] Starting service discovery...');
     // Enhanced configuration for better cross-platform discovery
     this.browser = this.bonjour.find({
-      type: LanDiscovery.SERVICE_TYPE,
+      type: LanDiscovery.SERVICE_NAME,
       protocol: LanDiscovery.PROTOCOL,
     });
 

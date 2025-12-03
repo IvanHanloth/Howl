@@ -187,26 +187,17 @@ export default class Receive extends Command {
 
       // Check if user wants to research
       if (result === 'RESEARCH') {
-        // Re-search for 5 seconds
-        this.log(chalk.cyan('\n🔍 Searching for 5 seconds...\n'));
+        // Re-search: if devices exist, search for 5 seconds; if no devices, search until found
+        if (services.size > 0) {
+          this.log(chalk.cyan('\n🔍 Searching for 5 seconds...\n'));
+        } else {
+          this.log(chalk.cyan('\n🔍 No devices available. Searching until a device is found...\n'));
+        }
+        
         await this.researchForSenders(services, knownServiceIds);
         
-        if (services.size === 0) {
-          this.log(chalk.yellow('No senders found on local network.'));
-          const continueSearching = await prompts({
-            type: 'confirm',
-            name: 'continue',
-            message: 'Continue searching?',
-            initial: true,
-          });
-
-          if (!continueSearching.continue) {
-            discovery.destroy();
-            process.exit(0);
-          }
-        } else {
-          knownServiceIds = new Set(services.keys());
-        }
+        // Update known service IDs after research
+        knownServiceIds = new Set(services.keys());
         continue;
       }
 
@@ -231,26 +222,17 @@ export default class Receive extends Command {
         process.exit(0);
       }
 
-      // Re-search for 5 seconds
-      this.log(chalk.cyan('\n🔍 Searching for 5 seconds...\n'));
+      // Re-search: if devices exist, search for 5 seconds; if no devices, search until found
+      if (services.size > 0) {
+        this.log(chalk.cyan('\n🔍 Searching for 5 seconds...\n'));
+      } else {
+        this.log(chalk.cyan('\n🔍 No devices available. Searching until a device is found...\n'));
+      }
+      
       await this.researchForSenders(services, knownServiceIds);
       
-      if (services.size === 0) {
-        this.log(chalk.yellow('No senders found on local network.'));
-        const continueSearching = await prompts({
-          type: 'confirm',
-          name: 'continue',
-          message: 'Continue searching?',
-          initial: true,
-        });
-
-        if (!continueSearching.continue) {
-          discovery.destroy();
-          process.exit(0);
-        }
-      } else {
-        knownServiceIds = new Set(services.keys());
-      }
+      // Update known service IDs after research
+      knownServiceIds = new Set(services.keys());
     }
 
     // Stop discovery before downloading
@@ -318,18 +300,23 @@ export default class Receive extends Command {
   }
 
   /**
-   * Re-search for senders for 5 seconds
-   * Continue searching until new sender found or all known senders leave
+   * Re-search for senders - continues until at least one device is found
+   * If devices exist, searches for the specified duration (default 5 seconds)
+   * If no devices exist, continues searching indefinitely until at least one is found
    */
   private async researchForSenders(
     services: Map<string, ServiceInfo>,
-    knownServiceIds: Set<string>
+    knownServiceIds: Set<string>,
+    duration: number = 5000
   ): Promise<void> {
     const startTime = Date.now();
-    const researchDuration = 5000; // 5 seconds
+    const hasInitialServices = services.size > 0;
+    
     const progressBar = new cliProgress.SingleBar(
       {
-        format: 'Searching |{bar}| {percentage}% | {value}s/{total}s',
+        format: hasInitialServices 
+          ? 'Searching |{bar}| {percentage}% | {value}s/{total}s'
+          : 'Searching for devices... ({value}s elapsed)',
         barCompleteChar: '\u2588',
         barIncompleteChar: '\u2591',
         hideCursor: true,
@@ -337,13 +324,18 @@ export default class Receive extends Command {
       cliProgress.Presets.shades_classic
     );
 
-    progressBar.start(5, 0);
+    progressBar.start(hasInitialServices ? Math.floor(duration / 1000) : 0, 0);
 
     return new Promise<void>((resolve) => {
       const updateInterval = setInterval(() => {
         const elapsed = Date.now() - startTime;
         const seconds = Math.floor(elapsed / 1000);
-        progressBar.update(seconds);
+        
+        if (hasInitialServices) {
+          progressBar.update(Math.min(seconds, Math.floor(duration / 1000)));
+        } else {
+          progressBar.update(seconds);
+        }
 
         // Check if all known senders have left
         let hasKnownSenders = false;
@@ -363,8 +355,11 @@ export default class Receive extends Command {
           }
         }
 
-        // Stop if time limit reached
-        if (elapsed >= researchDuration) {
+        // Stop conditions:
+        // 1. If we had initial services and time limit reached
+        // 2. If we had no initial services and now we found at least one
+        if ((hasInitialServices && elapsed >= duration) || 
+            (!hasInitialServices && services.size > 0)) {
           clearInterval(updateInterval);
           progressBar.stop();
           resolve();
