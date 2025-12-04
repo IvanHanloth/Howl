@@ -134,53 +134,34 @@ export default class Send extends Command {
     if (!skipFirewall && FirewallHelper.isWindows()) {
       spinner = ora('Checking Windows Firewall...').start();
 
-      const firewallEnabled = await FirewallHelper.isFirewallEnabled();
-      
-      if (firewallEnabled) {
-        const portRange = FirewallHelper.getPortRange();
-        const isInRange = actualPort >= portRange.start && actualPort <= portRange.end;
-        
-        // Check if port is already allowed
-        const isAllowed = await FirewallHelper.isPortAllowed(actualPort);
-        
-        if (!isAllowed) {
-          spinner.info('Windows Firewall detected - need to add firewall rule');
-          
-          this.log(chalk.yellow('\n⚠️  Windows Firewall may block connections from other devices.'));
-          
-          if (isInRange) {
-            this.log(chalk.cyan(`🔓 Attempting to add firewall rule for ports ${portRange.start}-${portRange.end}...`));
+      try {
+        // Use the new ensurePortAllowed method
+        const result = await FirewallHelper.ensurePortAllowed(actualPort);
+
+        if (result.success) {
+          if (result.uacTriggered) {
+            spinner.succeed(`Firewall configured: ${result.message}`);
           } else {
-            this.log(chalk.cyan(`🔓 Attempting to add firewall rule for port ${actualPort}...`));
-          }
-          
-          this.log(chalk.gray('   (You will see a UAC permission dialog)\n'));
-          
-          const result = isInRange 
-            ? await FirewallHelper.addRule()
-            : await FirewallHelper.addRuleForPort(actualPort);
-          
-          if (result.success) {
-            this.log(chalk.green('✅ ' + result.message + '\n'));
-          } else {
-            this.log(chalk.yellow('⚠️  ' + result.message));
-            
-            if (result.message.includes('cancelled')) {
-              this.log(chalk.yellow('\n⚠️  Firewall rule not added. Other devices may not be able to connect.'));
-              this.log(chalk.cyan('💡 You can manually add the firewall rule later:'));
-              this.log(chalk.gray(FirewallHelper.getManualInstructions()));
-              this.log(chalk.gray('\nContinuing without firewall rule...\n'));
-            } else {
-              this.log(chalk.cyan('\n💡 To allow connections from other devices:'));
-              this.log(chalk.gray(FirewallHelper.getManualInstructions()));
-              this.log(chalk.gray('\nContinuing without firewall rule...\n'));
-            }
+            spinner.succeed(result.message);
           }
         } else {
-          spinner.succeed(`Firewall rule already exists for port ${actualPort}`);
+          spinner.fail('Firewall configuration failed');
+
+          if (result.needsManualConfig) {
+            this.log(chalk.yellow('\n⚠️  ' + result.message));
+            this.log(chalk.cyan('\n💡 To allow connections from other devices, you can manually configure the firewall:'));
+            this.log(chalk.gray(FirewallHelper.getManualInstructions()));
+            this.log(chalk.yellow('\n⚠️  Continuing without firewall rule. Other devices may not be able to connect.\n'));
+          } else {
+            this.log(chalk.red('\n❌ ' + result.message));
+            this.error('Failed to configure firewall. Use --skip-firewall to bypass.');
+          }
         }
-      } else {
-        spinner.succeed('Windows Firewall is disabled');
+      } catch (error) {
+        spinner.fail('Firewall check failed');
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        this.log(chalk.yellow(`\n⚠️  Firewall check error: ${message}`));
+        this.log(chalk.yellow('Continuing without firewall configuration...\n'));
       }
     }
 
@@ -188,10 +169,10 @@ export default class Send extends Command {
     spinner = ora('Starting HTTP server...').start();
     const sender = new LanSender(actualPort);
     const discovery = new LanDiscovery();
-    
+
     // Set download limit
     sender.setMaxDownloads(maxDownloads);
-    
+
     // Set verification mode
     sender.setRequireVerification(!noVerification);
 
@@ -218,41 +199,36 @@ export default class Send extends Command {
 
       this.log(chalk.green('\n🚀 Ready to receive connections'));
       this.log(chalk.gray('Waiting for receivers...\n'));
-      
+
+
+      // Get local IP addresses
+      // Get local IP addresses using improved helper function
+      const { getLocalIpAddresses } = require('@howl/core');
+      const localIPs = getLocalIpAddresses();
       // Display verification code prominently (if verification is enabled)
       if (!noVerification) {
         this.log(chalk.cyan('='.repeat(50)));
         this.log(chalk.cyan.bold('\n  🔐 Verification Code: ') + chalk.yellow.bold(verificationCode) + '\n');
         this.log(chalk.cyan('='.repeat(50)));
-        
+
         this.log(chalk.cyan('\n📱 Receivers can connect via:'));
-        this.log(chalk.white(`   ⌨️ CLI: Select this device and enter code ${chalk.bold(verificationCode)}`));
-        this.log(chalk.white(`   🌐 Web: Open ${chalk.bold.underline(`http://localhost:${serverPort}`)} and enter code`));
+        this.log(chalk.white(`   ⌨️ CLI: Select this device and enter code ${chalk.yellow.bold(verificationCode)}`));
+        this.log(chalk.white(`   🌐 Web: Open ${chalk.bold.underline.cyan(`http://${localIPs[0]}:${serverPort}`)} and enter code`));
       } else {
         this.log(chalk.yellow('\n🔓 Verification is DISABLED - Direct access allowed'));
         this.log(chalk.cyan('\n📱 Receivers can connect via:'));
         this.log(chalk.white(`   ⌨️ CLI: Select this device (no code required)`));
-        this.log(chalk.white(`   🌐 Web: Open ${chalk.bold.underline(`http://localhost:${serverPort}/${fileMetadata.name}`)} to download directly`));
+        this.log(chalk.white(`   🌐 Web: Open ${chalk.bold.underline.cyan(`http://${localIPs[0]}:${serverPort}/${fileMetadata.name}`)} to download directly`));
       }
-      
-      // Get local IP addresses
-      const networkInterfaces = require('os').networkInterfaces();
-      const localIPs: string[] = [];
-      for (const [, interfaces] of Object.entries(networkInterfaces)) {
-        for (const iface of interfaces as any[]) {
-          if (iface.family === 'IPv4' && !iface.internal) {
-            localIPs.push(iface.address);
-          }
-        }
-      }
-      
-      if (localIPs.length > 0) {
-        this.log(chalk.gray(`\n📡 Local network URLs:`));
-        for (const ip of localIPs) {
+
+      // Show alternative IPs if there are multiple
+      if (localIPs.length > 1) {
+        this.log(chalk.gray(`\n📡 Alternative addresses (if above doesn't work):`));
+        for (const ip of localIPs.slice(1, 3)) { // Show max 2 alternatives
           this.log(chalk.gray(`   🌐 http://${ip}:${serverPort}`));
         }
       }
-      
+
       this.log(chalk.gray('\nPress Ctrl+C to stop\n'));
 
       // Setup progress bar

@@ -58,23 +58,125 @@ export function formatTime(seconds: number): string {
 }
 
 /**
- * Get local IP addresses
+ * Check if network interface name looks virtual
+ */
+function isVirtualInterface(name: string): boolean {
+  const lowerName = name.toLowerCase();
+  
+  // Virtual network patterns to exclude
+  const virtualPatterns = [
+    /^veth/,           // Docker virtual ethernet
+    /^docker/,         // Docker bridge
+    /^br-/,            // Docker bridge
+    /^vir/,            // Hyper-V Virtual Ethernet Adapter
+    /^lo/,             // Loopback
+    /^wsl/,            // WSL
+    /^utun/,           // macOS VPN/Tunnel
+    /^tun/,            // Linux VPN/Tunnel
+    /^tap/,            // TAP adapter
+  ];
+
+  // Check regex patterns
+  if (virtualPatterns.some(pattern => pattern.test(lowerName))) {
+    return true;
+  }
+
+  // Check name contains virtual keywords
+  if (lowerName.includes('vmware') || 
+      lowerName.includes('virtualbox') ||
+      lowerName.includes('hyper-v') ||
+      lowerName.includes('virtual') ||
+      lowerName.includes('vlan') || 
+      lowerName.includes('bridge') || 
+      lowerName.includes('vpn') ||
+      lowerName.includes('veth') ||
+      lowerName.includes('docker') ||
+      lowerName.includes('default switch') ||
+      lowerName.includes('adapter vmnet')) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Check if IP address is virtual/reserved
+ */
+function isVirtualIpRange(address: string): boolean {
+  // Loopback and link-local
+  if (address.startsWith('127.') || address.startsWith('169.254.')) {
+    return true;
+  }
+
+  // Docker default network range (172.16.0.0 - 172.31.255.255)
+  const parts = address.split('.');
+  if (parts.length === 4) {
+    const firstOctet = parseInt(parts[0], 10);
+    const secondOctet = parseInt(parts[1], 10);
+    if (firstOctet === 172 && secondOctet >= 16 && secondOctet <= 31) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Get local IP addresses, prioritizing physical network adapters
+ * Returns physical IPs first (Ethernet, WiFi), then virtual IPs
+ * Filters out Docker, VPN, WSL, and other virtual networks
  */
 export function getLocalIpAddresses(): string[] {
   const os = require('os');
   const interfaces = os.networkInterfaces();
-  const addresses: string[] = [];
+  const physicalIPs: string[] = [];
+  const virtualIPs: string[] = [];
 
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      // Skip internal and non-IPv4 addresses
-      if (iface.family === 'IPv4' && !iface.internal) {
-        addresses.push(iface.address);
+  // Physical adapter name patterns (prioritized)
+  const physicalPatterns = [
+    /^eth/,      // Ethernet (Linux)
+    /^en[0-9]/,  // macOS Ethernet
+    /^wlan/,     // WiFi (Linux)
+    /^wifi/,     // WiFi (some systems)
+    /^bond/,     // Bonded interfaces
+    /^eno/,      // Ethernet (embedded)
+    /^enp/,      // Ethernet (PCI bus)
+  ];
+
+  const isPhysicalAdapter = (name: string): boolean => {
+    return physicalPatterns.some(pattern => pattern.test(name.toLowerCase()));
+  };
+
+  for (const [name, ifaces] of Object.entries(interfaces)) {
+    // Check if virtual
+    const isVirtual = isVirtualInterface(name);
+    const isPhysical = isPhysicalAdapter(name);
+
+    for (const iface of ifaces as any[]) {
+      // Only process IPv4 addresses
+      if (iface.family !== 'IPv4') {
+        continue;
+      }
+
+      // Skip if it's a reserved/virtual IP range
+      if (isVirtualIpRange(iface.address)) {
+        continue;
+      }
+
+      // Categorize and add to appropriate list
+      if (isVirtual) {
+        virtualIPs.push(iface.address);
+      } else if (isPhysical) {
+        physicalIPs.unshift(iface.address); // Prioritize physical
+      } else {
+        // Unknown interface type - treat as physical if not virtual
+        physicalIPs.push(iface.address);
       }
     }
   }
 
-  return addresses;
+  // Return physical IPs first (most reliable), then virtual IPs
+  return [...physicalIPs, ...virtualIPs];
 }
 
 /**

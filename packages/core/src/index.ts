@@ -13,5 +13,5 @@ export { LanSender } from './transport/lan-sender';
 export { LanReceiver } from './transport/lan-receiver';
 
 // Utilities
-export { generateRoomCode, generatePeerId } from './utils';
+export { generateRoomCode, generatePeerId, getLocalIpAddresses } from './utils';
 export { FirewallHelper } from './utils/firewall';
