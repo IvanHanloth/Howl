@@ -427,9 +427,11 @@ Or use Windows Defender Firewall with Advanced Security:
 
   /**
    * Find an available port in the range 40000-40050, or continue beyond if all occupied
+   * If userSpecified is true and the port is not available, throws an error
+   * If userSpecified is false (auto mode), searches for next available port
    * Returns the specified port if available, otherwise searches the range and beyond
    */
-  static async findAvailablePort(preferredPort?: number): Promise<number> {
+  static async findAvailablePort(preferredPort?: number, userSpecified: boolean = false): Promise<number> {
     const net = require('net');
     
     const isPortAvailable = (port: number): Promise<boolean> => {
@@ -441,11 +443,14 @@ Or use Windows Defender Firewall with Advanced Security:
         });
         
         server.once('listening', () => {
-          server.close();
-          resolve(true);
+          // Wait for the port to be fully released before resolving
+          server.close(() => {
+            resolve(true);
+          });
         });
         
-        server.listen(port);
+        // Bind to 0.0.0.0 (IPv4) to match LanSender behavior
+        server.listen(port, '0.0.0.0');
       });
     };
 
@@ -454,7 +459,14 @@ Or use Windows Defender Firewall with Advanced Security:
       if (await isPortAvailable(preferredPort)) {
         return preferredPort;
       }
-      throw new Error(`Specified port ${preferredPort} is not available`);
+      
+      // If user explicitly specified this port, throw error
+      if (userSpecified) {
+        throw new Error(`Specified port ${preferredPort} is not available`);
+      }
+      
+      // Otherwise, continue to search for available port
+      console.log(`[FirewallHelper] Preferred port ${preferredPort} is busy, searching for alternatives...`);
     }
 
     // Try default port 40000 first

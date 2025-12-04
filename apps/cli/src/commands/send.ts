@@ -121,7 +121,12 @@ export default class Send extends Command {
     spinner.text = 'Finding available port...';
     let actualPort: number;
     try {
-      actualPort = await FirewallHelper.findAvailablePort(requestedPort || undefined);
+      // Pass userSpecified=true only if user explicitly provided a port (not 0)
+      const userSpecified = requestedPort > 0;
+      actualPort = await FirewallHelper.findAvailablePort(
+        requestedPort > 0 ? requestedPort : undefined,
+        userSpecified
+      );
       spinner.succeed(`Found available port: ${actualPort}`);
     } catch (error) {
       spinner.fail('Port not available');
