@@ -10,6 +10,7 @@ import {
   LanReceiver,
   ServiceInfo,
   TransferProgress,
+  FirewallHelper,
 } from '@howl/core';
 
 /**
@@ -22,6 +23,8 @@ export default class Receive extends Command {
     '<%= config.bin %> <%= command.id %>',
     '<%= config.bin %> <%= command.id %> --output ./downloads',
     '<%= config.bin %> <%= command.id %> 839210',
+    '<%= config.bin %> <%= command.id %> --lan-only',
+    '<%= config.bin %> <%= command.id %> --port 8080 --uploads 5',
   ];
 
   static flags = {
@@ -30,8 +33,20 @@ export default class Receive extends Command {
       description: 'Output directory',
       default: './downloads',
     }),
-    lan: Flags.boolean({
-      description: 'Force LAN mode (discover local senders)',
+    'lan-only': Flags.boolean({
+      description: 'Only use mDNS discovery (disable HTTP upload server)',
+      default: false,
+    }),
+    port: Flags.integer({
+      description: 'Port for HTTP server (default: 40001 or next available)',
+      default: 0,
+    }),
+    uploads: Flags.integer({
+      description: 'Maximum number of uploads (0 = unlimited, default = 1)',
+      default: 1,
+    }),
+    'skip-firewall': Flags.boolean({
+      description: 'Skip automatic firewall configuration (Windows only)',
       default: false,
     }),
   };
@@ -54,10 +69,18 @@ export default class Receive extends Command {
 
     this.log(chalk.cyan('📥 howl - File Receiver\n'));
 
+    // If room code provided, use WAN mode (P2P via signaling server)
     if (args.code) {
       await this.receiveViaWan(args.code as string, outputDir);
-    } else {
+      return;
+    }
+
+    // Default: Hybrid mode (HTTP server + mDNS discovery)
+    // Unless --lan-only flag is set
+    if (flags['lan-only']) {
       await this.receiveViaLan(outputDir);
+    } else {
+      await this.startHybridMode(outputDir, flags.port, flags.uploads, flags['skip-firewall']);
     }
   }
 
@@ -454,4 +477,218 @@ export default class Receive extends Command {
   private formatSpeed(bytesPerSecond: number): string {
     return `${this.formatBytes(bytesPerSecond)}/s`;
   }
+
+  /**
+   * Start HTTP server to receive file uploads
+   */
+  /**
+   * Start hybrid mode: HTTP server + mDNS discovery
+   */
+  private async startHybridMode(
+    outputDir: string,
+    requestedPort: number,
+    maxUploads: number,
+    skipFirewall: boolean = false
+  ): Promise<void> {
+    this.log(chalk.cyan('🌐 Starting hybrid mode (HTTP + mDNS)...\n'));
+
+    // Start HTTP server
+    const receiver = await this.setupHttpServer(outputDir, requestedPort, maxUploads, skipFirewall);
+    if (!receiver) {
+      return; // Error already handled
+    }
+
+    // Start mDNS discovery in background
+    this.log(chalk.cyan('\n📡 Starting mDNS discovery in background...\n'));
+    const discovery = new LanDiscovery();
+    const services: Map<string, ServiceInfo> = new Map();
+
+    discovery.on('service-up', (service: ServiceInfo) => {
+      services.set(service.id, service);
+      this.log(chalk.green(`📱 Sender discovered: ${chalk.bold(service.name)} (${service.host}:${service.port})`));
+    });
+
+    discovery.on('service-down', (service: ServiceInfo) => {
+      services.delete(service.id);
+      this.log(chalk.gray(`📴 Sender left: ${service.name}`));
+    });
+
+    discovery.startDiscovery();
+
+    this.log(chalk.gray('Both HTTP server and mDNS discovery are running.'));
+    this.log(chalk.gray('Users can upload via HTTP or you can connect to discovered senders.\n'));
+
+    // Handle Ctrl+C gracefully
+    const cleanup = async () => {
+      this.log(chalk.yellow('\n\n👋 Shutting down...'));
+      await receiver.stopServer();
+      discovery.destroy();
+      process.exit(0);
+    };
+
+    process.on('SIGINT', cleanup);
+    process.on('SIGTERM', cleanup);
+
+    // Keep the process running
+    await new Promise(() => {
+      // Run indefinitely until interrupted
+    });
+  }
+
+  /**
+   * Setup HTTP server and return receiver instance
+   */
+  private async setupHttpServer(
+    outputDir: string,
+    requestedPort: number,
+    maxUploads: number,
+    skipFirewall: boolean = false
+  ): Promise<LanReceiver | null> {
+    let spinner = ora('Preparing HTTP server...').start();
+
+    // Find available port first
+    spinner.text = 'Finding available port...';
+    let actualPort: number;
+    try {
+      // Default to 40001 for receiver if no port specified
+      const defaultPort = requestedPort > 0 ? requestedPort : 40001;
+      const userSpecified = requestedPort > 0;
+      actualPort = await FirewallHelper.findAvailablePort(
+        defaultPort,
+        userSpecified
+      );
+      spinner.succeed(`Found available port: ${actualPort}`);
+    } catch (error) {
+      spinner.fail('Port not available');
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.error(chalk.red(message));
+      return null;
+    }
+
+    // Windows Firewall handling
+    if (!skipFirewall && FirewallHelper.isWindows()) {
+      spinner = ora('Checking Windows Firewall...').start();
+
+      try {
+        const result = await FirewallHelper.ensurePortAllowed(actualPort);
+
+        if (result.success) {
+          if (result.uacTriggered) {
+            spinner.succeed(`Firewall configured: ${result.message}`);
+          } else {
+            spinner.succeed(result.message);
+          }
+        } else {
+          spinner.fail('Firewall configuration failed');
+
+          if (result.needsManualConfig) {
+            this.log(chalk.yellow('\n⚠️  ' + result.message));
+            this.log(chalk.cyan('\n💡 To allow connections from other devices, you can manually configure the firewall:'));
+            this.log(chalk.gray(FirewallHelper.getManualInstructions()));
+            this.log(chalk.yellow('\n⚠️  Continuing without firewall rule. Other devices may not be able to connect.\n'));
+          } else {
+            this.log(chalk.red('\n❌ ' + result.message));
+            this.error('Failed to configure firewall. Use --skip-firewall to bypass.');
+          }
+        }
+      } catch (error) {
+        spinner.fail('Firewall check failed');
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        this.log(chalk.yellow(`\n⚠️  Firewall check error: ${message}`));
+        this.log(chalk.yellow('Continuing without firewall configuration...\n'));
+      }
+    }
+
+    // Start HTTP server
+    spinner = ora('Starting HTTP server...').start();
+    const receiver = new LanReceiver();
+    receiver.setUploadDir(outputDir);
+    receiver.setMaxUploads(maxUploads);
+
+    try {
+      const serverPort = await receiver.startServer(actualPort);
+      spinner.succeed(`HTTP server started on 0.0.0.0:${serverPort}`);
+
+      // Get local IP addresses
+      const { getLocalIpAddresses } = require('@howl/core');
+      const localIPs = getLocalIpAddresses();
+
+      this.log(chalk.green('\n🚀 HTTP server ready to receive uploads'));
+      this.log(chalk.gray(`Files will be saved to: ${outputDir}\n`));
+
+      this.log(chalk.cyan('📱 Senders can upload via:'));
+      this.log(chalk.white(`   🌐 Web: Open ${chalk.bold.underline.cyan(`http://${localIPs[0]}:${serverPort}`)}`));
+      this.log(chalk.gray(`\n   📝 Upload process:`));
+      this.log(chalk.gray(`      1. Select file in browser`));
+      this.log(chalk.gray(`      2. Click "Request Upload"`));
+      this.log(chalk.gray(`      3. Verification code will appear here`));
+      this.log(chalk.gray(`      4. Enter code in browser to upload`));
+
+      // Show alternative IPs if there are multiple
+      if (localIPs.length > 1) {
+        this.log(chalk.gray(`\n📡 Alternative addresses (if above doesn't work):`));
+        for (const ip of localIPs.slice(1, 3)) {
+          this.log(chalk.gray(`   🌐 http://${ip}:${serverPort}`));
+        }
+      }
+
+      this.log(chalk.gray(`\n📊 Upload limit: ${maxUploads === 0 ? 'Unlimited' : maxUploads}`));
+
+      // Setup event handlers for two-stage upload
+      receiver.on('upload-requested', (data: any) => {
+        this.log(chalk.cyan('\n' + '='.repeat(60)));
+        this.log(chalk.cyan.bold('📤 Upload Request Received'));
+        this.log(chalk.cyan('='.repeat(60)));
+        this.log(chalk.white(`\n  📁 File: ${chalk.bold(data.filename)}`));
+        this.log(chalk.white(`  📊 Size: ${this.formatBytes(data.size)}`));
+        this.log(chalk.white(`  🔑 Hash: ${data.hash.substring(0, 16)}...`));
+        this.log(chalk.white(`  📅 Created: ${new Date(data.createdAt).toLocaleString()}`));
+        this.log(chalk.white(`  ✏️  Modified: ${new Date(data.modifiedAt).toLocaleString()}`));
+        this.log(chalk.white(`  🌐 From: ${data.clientIp}`));
+        this.log(chalk.cyan('\n' + '='.repeat(60)));
+        this.log(chalk.yellow.bold(`  🔐 Verification Code: ${data.verificationCode}`));
+        this.log(chalk.cyan('='.repeat(60)));
+        this.log(chalk.gray('\n  Tell the sender to enter this code in the browser.\n'));
+      });
+
+      receiver.on('upload-verified', (data: any) => {
+        this.log(chalk.green(`\n✅ Verification successful for ${chalk.bold(data.filename)} from ${data.clientIp}`));
+        this.log(chalk.gray(`   Receiving file...\n`));
+      });
+
+      receiver.on('verification-failed', (data: any) => {
+        this.log(chalk.red(`\n❌ Verification failed for ${chalk.bold(data.filename)} from ${data.clientIp}`));
+        this.log(chalk.gray(`   Invalid code provided\n`));
+      });
+
+      receiver.on('upload-completed', (data: any) => {
+        this.log(chalk.green(`\n✅ File uploaded successfully!`));
+        this.log(chalk.white(`   📁 File: ${chalk.bold(data.fileName)}`));
+        this.log(chalk.white(`   📊 Size: ${this.formatBytes(data.size)}`));
+        this.log(chalk.white(`   🔑 Hash: ${data.hash.substring(0, 16)}... (verified)`));
+        this.log(chalk.white(`   🌐 From: ${data.clientIp}`));
+        this.log(chalk.gray(`   💾 Saved to: ${path.join(outputDir, data.fileName)}`));
+        this.log(chalk.gray(`   📈 Uploads: ${data.uploadCount}/${data.maxUploads}\n`));
+      });
+
+      receiver.on('upload-limit-reached', (data: any) => {
+        this.log(chalk.yellow(`\n📊 Upload limit reached (${data.currentCount}/${data.maxUploads})`));
+        this.log(chalk.cyan('Shutting down server...\n'));
+        
+        // Auto-exit after reaching limit
+        setTimeout(async () => {
+          await receiver.stopServer();
+          process.exit(0);
+        }, 1000);
+      });
+
+      return receiver;
+    } catch (error) {
+      spinner.fail('Failed to start server');
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.error(chalk.red(`Server error: ${message}`));
+      return null;
+    }
+  }
+
 }

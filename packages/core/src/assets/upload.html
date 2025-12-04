@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Howl - Upload File</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+    }
+    .container {
+      background: white;
+      border-radius: 12px;
+      padding: 40px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    h1 {
+      color: #667eea;
+      margin-bottom: 30px;
+      font-size: 2rem;
+    }
+    .verification-section, .upload-section {
+      margin-bottom: 30px;
+    }
+    .hidden {
+      display: none !important;
+    }
+    label {
+      display: block;
+      margin-bottom: 8px;
+      color: #333;
+      font-weight: 500;
+    }
+    
+    /* Drop Zone Styles */
+    .drop-zone {
+      border: 3px dashed #ccc;
+      border-radius: 12px;
+      padding: 40px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s;
+      background: #fafafa;
+      margin-bottom: 20px;
+    }
+    .drop-zone:hover {
+      border-color: #667eea;
+      background: #f0f4ff;
+    }
+    .drop-zone.drag-over {
+      border-color: #667eea;
+      background: #e8efff;
+      transform: scale(1.02);
+    }
+    .drop-zone-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+    .drop-zone-text {
+      color: #666;
+      font-size: 16px;
+      margin-bottom: 8px;
+    }
+    .drop-zone-hint {
+      color: #999;
+      font-size: 14px;
+    }
+    
+    /* File Input Hidden */
+    #fileInput {
+      display: none;
+    }
+    
+    /* File List Styles */
+    .file-list {
+      margin-top: 20px;
+    }
+    .file-item {
+      background: #f8f9fa;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 12px;
+      position: relative;
+    }
+    .file-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+    .file-item-name {
+      font-weight: 600;
+      color: #333;
+      word-break: break-all;
+      flex: 1;
+      margin-right: 12px;
+    }
+    .file-item-remove {
+      background: #ff4444;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 4px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      width: auto;
+    }
+    .file-item-remove:hover {
+      background: #cc0000;
+      transform: none;
+    }
+    .file-info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 8px;
+      font-size: 13px;
+      color: #666;
+    }
+    .file-info-item {
+      display: flex;
+      flex-direction: column;
+    }
+    .file-info-label {
+      font-weight: 500;
+      color: #888;
+      font-size: 11px;
+      text-transform: uppercase;
+      margin-bottom: 2px;
+    }
+    .file-info-value {
+      color: #333;
+      word-break: break-all;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    .file-hash {
+      margin-top: 8px;
+      padding: 8px;
+      background: #fff;
+      border-radius: 4px;
+      border: 1px solid #e0e0e0;
+    }
+    .calculating {
+      color: #667eea;
+      font-style: italic;
+    }
+    
+    input[type="text"] {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 6px;
+      font-size: 16px;
+      transition: border-color 0.3s;
+    }
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+    button {
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+    button:hover {
+      transform: translateY(-2px);
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .progress {
+      margin-top: 20px;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 30px;
+      background: #e0e0e0;
+      border-radius: 15px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+      width: 0%;
+      transition: width 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 600;
+    }
+    #progressText {
+      text-align: center;
+      color: #666;
+    }
+    .message {
+      padding: 12px;
+      border-radius: 6px;
+      margin-top: 20px;
+    }
+    .error {
+      background: #fee;
+      color: #c00;
+      border: 1px solid #fcc;
+    }
+    .success {
+      background: #efe;
+      color: #060;
+      border: 1px solid #cfc;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🚀 Upload File</h1>
+    
+    <div id="selectSection" class="upload-section">
+      <div class="drop-zone" id="dropZone">
+        <div class="drop-zone-icon">📁</div>
+        <div class="drop-zone-text">Drag & Drop files here</div>
+        <div class="drop-zone-hint">or click to browse</div>
+      </div>
+      <input type="file" id="fileInput">
+      
+      <div id="fileList" class="file-list hidden"></div>
+      
+      <button id="requestBtn" onclick="requestUpload()" disabled>Request Upload</button>
+    </div>
+
+    <div id="verificationSection" class="verification-section hidden">
+      <label for="verificationCode">Enter Verification Code (shown on receiver):</label>
+      <input type="text" id="verificationCode" placeholder="000000" maxlength="6" pattern="[0-9]{6}">
+      <button id="uploadBtn" onclick="uploadFile()">Upload</button>
+    </div>
+      
+    <div id="progress" class="progress hidden">
+      <div class="progress-bar">
+        <div id="progressFill" class="progress-fill">0%</div>
+      </div>
+      <div id="progressText"></div>
+    </div>
+
+    <div id="message"></div>
+  </div>
+  <script>
+    /*!
+ * hash-wasm (https://www.npmjs.com/package/hash-wasm)
+ * (c) Dani Biro
+ * @license MIT
+ */
+
+!function(A,I){"object"==typeof exports&&"undefined"!=typeof module?I(exports):"function"==typeof define&&define.amd?define(["exports"],I):I((A="undefined"!=typeof globalThis?globalThis:A||self).hashwasm=A.hashwasm||{})}(this,(function(A){"use strict";var I,g={name:"sha256",data:"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c2pBx6KerX1qIhkgASADcyACcSABIANxcyABQR53IAFBE3dzIAFBCndzaiAaaiICaiIJIBMgEnNxIBJzaiAJQRp3IAlBFXdzIAlBB3dzakHRxqk2aiIaIAIgAXMgA3EgAiABcXMgAkEedyACQRN3cyACQQp3c2ogGGoiA2oiESAJIBNzcSATc2ogEUEadyARQRV3cyARQQd3c2pB59KkoQFqIhggAyACcyABcSADIAJxcyADQR53IANBE3dzIANBCndzaiAUaiIBaiISIBEgCXNxIAlzaiASQRp3IBJBFXdzIBJBB3dzakGFldy9AmoiFCABIANzIAJxIAEgA3FzIAFBHncgAUETd3MgAUEKd3NqIBdqIgJqIhMgI2ogJiASaiAiIBFqICUgCWogEyASIBFzcSARc2ogE0EadyATQRV3cyATQQd3c2pBuMLs8AJqIhcgAiABcyADcSACIAFxcyACQR53IAJBE3dzIAJBCndzaiAZaiIDaiIJIBMgEnNxIBJzaiAJQRp3IAlBFXdzIAlBB3dzakH827HpBGoiGSADIAJzIAFxIAMgAnFzIANBHncgA0ETd3MgA0EKd3NqIBpqIgFqIhEgCSATc3EgE3NqIBFBGncgEUEVd3MgEUEHd3NqQZOa4JkFaiIaIAEgA3MgAnEgASADcXMgAUEedyABQRN3cyABQQp3c2ogGGoiAmoiEiARIAlzcSAJc2ogEkEadyASQRV3cyASQQd3c2pB1OapqAZqIhggAiABcyADcSACIAFxcyACQR53IAJBE3dzIAJBCndzaiAUaiIDaiITaiAoIBJqICQgEWogJyAJaiATIBIgEXNxIBFzaiATQRp3IBNBFXdzIBNBB3dzakG7laizB2oiFCADIAJzIAFxIAMgAnFzIANBHncgA0ETd3MgA0EKd3NqIBdqIgFqIgkgEyASc3EgEnNqIAlBGncgCUEVd3MgCUEHd3NqQa6Si454aiIXIAEgA3MgAnEgASADcXMgAUEedyABQRN3cyABQQp3c2ogGWoiAmoiESAJIBNzcSATc2ogEUEadyARQRV3cyARQQd3c2pBhdnIk3lqIhkgAiABcyADcSACIAFxcyACQR53IAJBE3dzIAJBCndzaiAaaiIDaiISIBEgCXNxIAlzaiASQRp3IBJBFXdzIBJBB3dzakGh0f+VemoiGiADIAJz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",hash:"8c18dd94"};function B(A,I,g,B){return new(g||(g=Promise))((function(E,Q){function c(A){try{i(B.next(A))}catch(A){Q(A)}}function d(A){try{i(B.throw(A))}catch(A){Q(A)}}function i(A){var I;A.done?E(A.value):(I=A.value,I instanceof g?I:new g((function(A){A(I)}))).then(c,d)}i((B=B.apply(A,I||[])).next())}))}"function"==typeof SuppressedError&&SuppressedError;class E{constructor(){this.mutex=Promise.resolve()}lock(){let A=()=>{};return this.mutex=this.mutex.then((()=>new Promise(A))),new Promise((I=>{A=I}))}dispatch(A){return B(this,void 0,void 0,(function*(){const I=yield this.lock();try{return yield Promise.resolve(A())}finally{I()}}))}}const Q="undefined"!=typeof globalThis?globalThis:"undefined"!=typeof self?self:"undefined"!=typeof window?window:global,c=null!==(I=Q.Buffer)&&void 0!==I?I:null,d=Q.TextEncoder?new Q.TextEncoder:null;function i(A,I){return(15&A)+(A>>6|A>>3&8)<<4|(15&I)+(I>>6|I>>3&8)}const n="a".charCodeAt(0)-10,o="0".charCodeAt(0);function a(A,I,g){let B=0;for(let E=0;E<g;E++){let g=I[E]>>>4;A[B++]=g>9?g+n:g+o,g=15&I[E],A[B++]=g>9?g+n:g+o}return String.fromCharCode.apply(null,A)}const e=null!==c?A=>{if("string"==typeof A){const I=c.from(A,"utf8");return new Uint8Array(I.buffer,I.byteOffset,I.length)}if(c.isBuffer(A))return new Uint8Array(A.buffer,A.byteOffset,A.length);if(ArrayBuffer.isView(A))return new Uint8Array(A.buffer,A.byteOffset,A.byteLength);throw new Error("Invalid data type!")}:A=>{if("string"==typeof A)return d.encode(A);if(ArrayBuffer.isView(A))return new Uint8Array(A.buffer,A.byteOffset,A.byteLength);throw new Error("Invalid data type!")},N="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",y=new Uint8Array(256);for(let A=0;A<N.length;A++)y[N.charCodeAt(A)]=A;function t(A){const I=function(A){let I=Math.floor(.75*A.length);const g=A.length;return"="===A[g-1]&&(I-=1,"="===A[g-2]&&(I-=1)),I}(A),g=A.length,B=new Uint8Array(I);let E=0;for(let I=0;I<g;I+=4){const g=y[A.charCodeAt(I)],Q=y[A.charCodeAt(I+1)],c=y[A.charCodeAt(I+2)],d=y[A.charCodeAt(I+3)];B[E]=g<<2|Q>>4,E+=1,B[E]=(15&Q)<<4|c>>2,E+=1,B[E]=(3&c)<<6|63&d,E+=1}return B}const C=16384,D=new E,r=new Map;function q(A,I){return B(this,void 0,void 0,(function*(){let g=null,E=null,Q=!1;if("undefined"==typeof WebAssembly)throw new Error("WebAssembly is not supported in this environment!");const c=()=>new DataView(g.exports.memory.buffer).getUint32(g.exports.STATE_SIZE,!0),d=D.dispatch((()=>B(this,void 0,void 0,(function*(){if(!r.has(A.name)){const I=t(A.data),g=WebAssembly.compile(I);r.set(A.name,g)}const I=yield r.get(A.name);g=yield WebAssembly.instantiate(I,{})})))),n=(A=null)=>{Q=!0,g.exports.Hash_Init(A)},o=A=>{if(!Q)throw new Error("update() called before init()");(A=>{let I=0;for(;I<A.length;){const B=A.subarray(I,I+C);I+=B.length,E.set(B),g.exports.Hash_Update(B.length)}})(e(A))},N=new Uint8Array(2*I),y=(A,B=null)=>{if(!Q)throw new Error("digest() called before init()");return Q=!1,g.exports.Hash_Final(B),"binary"===A?E.slice(0,I):a(N,E,I)},q=A=>"string"==typeof A?A.length<4096:A.byteLength<C;let z=q;switch(A.name){case"argon2":case"scrypt":z=()=>!0;break;case"blake2b":case"blake2s":z=(A,I)=>I<=512&&q(A);break;case"blake3":z=(A,I)=>0===I&&q(A);break;case"xxhash64":case"xxhash3":case"xxhash128":case"crc64":z=()=>!1}return yield(()=>B(this,void 0,void 0,(function*(){g||(yield d);const A=g.exports.Hash_GetBuffer(),I=g.exports.memory.buffer;E=new Uint8Array(I,A,C)})))(),{getMemory:()=>E,writeMemory:(A,I=0)=>{E.set(A,I)},getExports:()=>g.exports,setMemorySize:A=>{g.exports.Hash_SetMemorySize(A);const I=g.exports.Hash_GetBuffer(),B=g.exports.memory.buffer;E=new Uint8Array(B,I,A)},init:n,update:o,digest:y,save:()=>{if(!Q)throw new Error("save() can only be called after init() and before digest()");const I=g.exports.Hash_GetState(),B=c(),E=g.exports.memory.buffer,d=new Uint8Array(E,I,B),n=new Uint8Array(4+B);return function(A,I){const g=I.length>>1;for(let B=0;B<g;B++){const g=B<<1;A[B]=i(I.charCodeAt(g),I.charCodeAt(g+1))}}(n,A.hash),n.set(d,4),n},load:I=>{if(!(I instanceof Uint8Array))throw new Error("load() expects an Uint8Array generated by save()");const B=g.exports.Hash_GetState(),E=c(),d=4+E,n=g.exports.memory.buffer;if(I.length!==d)throw new Error(`Bad state length (expected ${d} bytes, got ${I.length})`);if(!function(A,I){if(A.length!==2*I.length)return!1;for(let g=0;g<I.length;g++){const B=g<<1;if(I[g]!==i(A.charCodeAt(B),A.charCodeAt(B+1)))return!1}return!0}(A.hash,I.subarray(0,4)))throw new Error("This state was written by an incompatible hash implementation");const o=I.subarray(4);new Uint8Array(n,B,E).set(o),Q=!0},calculate:(A,B=null,Q=null)=>{if(!z(A,B))return n(B),o(A),y("hex",Q);const c=e(A);return E.set(c),g.exports.Hash_Calculate(c.length,B,Q),a(N,E,I)},hashLength:I}}))}const z=new E;let F=null;A.createSHA256=function(){return q(g,32).then((A=>{A.init(256);const I={init:()=>(A.init(256),I),update:g=>(A.update(g),I),digest:I=>A.digest(I),save:()=>A.save(),load:g=>(A.load(g),I),blockSize:64,digestSize:32};return I}))},A.sha256=function(A){if(null===F)return function(A,I,g){return B(this,void 0,void 0,(function*(){const B=yield A.lock(),E=yield q(I,g);return B(),E}))}(z,g,32).then((I=>(F=I,F.calculate(A,256))));try{const I=F.calculate(A,256);return Promise.resolve(I)}catch(A){return Promise.reject(A)}}}));
+</script>
+  <script type="module">
+
+    let uploadId = null;
+    let fileHash = null;
+    let selectedFiles = [];
+
+    // Initialize drag and drop
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const fileListDiv = document.getElementById('fileList');
+
+    // Prevent default drag behaviors
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+      dropZone.addEventListener(eventName, preventDefaults, false);
+      document.body.addEventListener(eventName, preventDefaults, false);
+    });
+
+    function preventDefaults(e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    // Highlight drop zone when dragging over it
+    ['dragenter', 'dragover'].forEach(eventName => {
+      dropZone.addEventListener(eventName, () => {
+        dropZone.classList.add('drag-over');
+      }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropZone.addEventListener(eventName, () => {
+        dropZone.classList.remove('drag-over');
+      }, false);
+    });
+
+    // Handle dropped files
+    dropZone.addEventListener('drop', (e) => {
+      const files = e.dataTransfer.files;
+      handleFiles(files);
+    }, false);
+
+    // Handle click to browse
+    dropZone.addEventListener('click', () => {
+      fileInput.click();
+    });
+
+    // Handle file input change
+    fileInput.addEventListener('change', (e) => {
+      handleFiles(e.target.files);
+    });
+
+    // Format file size
+    function formatFileSize(bytes) {
+      if (bytes === 0) return '0 Bytes';
+      const k = 1024;
+      const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    }
+
+    // Format date
+    function formatDate(timestamp) {
+      const date = new Date(timestamp);
+      return date.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+    }
+
+    // Calculate SHA-256 hash of file using hash-wasm (streaming for large files)
+    async function calculateFileHash(file, onProgress) {
+      try {
+        const hasher = await hashwasm.createSHA256();
+        hasher.init();
+        
+        const chunkSize = 64 * 1024 * 1024; // 64MB chunks to avoid memory issues
+        const chunks = Math.ceil(file.size / chunkSize);
+        
+        for (let i = 0; i < chunks; i++) {
+          const start = i * chunkSize;
+          const end = Math.min(start + chunkSize, file.size);
+          const chunk = file.slice(start, end);
+          const buffer = await chunk.arrayBuffer();
+          
+          hasher.update(new Uint8Array(buffer));
+          
+          // Report progress
+          if (onProgress) {
+            const progress = Math.round(((i + 1) / chunks) * 100);
+            onProgress(progress);
+          }
+        }
+        
+        const hash = hasher.digest('hex');
+        return hash;
+      } catch (error) {
+        console.error('Error calculating hash:', error);
+        throw new Error('Failed to calculate file hash: ' + error.message);
+      }
+    }
+
+    // Handle files
+    async function handleFiles(files) {
+      if (files.length === 0) return;
+
+      // Clear previous selection
+      selectedFiles = [];
+      fileListDiv.innerHTML = '';
+      
+      // Only take the first file
+      const file = files[0];
+      
+      const fileId = Date.now();
+      const fileItem = {
+        id: fileId,
+        file: file,
+        hash: null
+      };
+      
+      selectedFiles.push(fileItem);
+      
+      // Create file item UI
+      const itemDiv = document.createElement('div');
+      itemDiv.className = 'file-item';
+      itemDiv.id = `file-${fileId}`;
+      
+      itemDiv.innerHTML = `
+        <div class="file-item-header">
+          <div class="file-item-name">${file.name}</div>
+          <button class="file-item-remove" onclick="window.removeFile(${fileId})">Remove</button>
+        </div>
+        <div class="file-info-grid">
+          <div class="file-info-item">
+            <div class="file-info-label">Size</div>
+            <div class="file-info-value">${formatFileSize(file.size)}</div>
+          </div>
+          <div class="file-info-item">
+            <div class="file-info-label">Type</div>
+            <div class="file-info-value">${file.type || 'Unknown'}</div>
+          </div>
+          <div class="file-info-item">
+            <div class="file-info-label">Last Modified</div>
+            <div class="file-info-value">${formatDate(file.lastModified)}</div>
+          </div>
+          <div class="file-info-item">
+            <div class="file-info-label">Path</div>
+            <div class="file-info-value">${file.webkitRelativePath || file.name}</div>
+          </div>
+        </div>
+        <div class="file-hash">
+          <div class="file-info-label">SHA-256</div>
+          <div class="file-info-value calculating" id="hash-${fileId}">Calculating... 0%</div>
+        </div>
+      `;
+      
+      fileListDiv.appendChild(itemDiv);
+      fileListDiv.classList.remove('hidden');
+      
+      // Calculate hash asynchronously with progress
+      try {
+        const hashElement = document.getElementById(`hash-${fileId}`);
+        const hash = await calculateFileHash(file, (progress) => {
+          if (hashElement) {
+            hashElement.textContent = `Calculating... ${progress}%`;
+          }
+        });
+        
+        fileItem.hash = hash;
+        if (hashElement) {
+          hashElement.textContent = hash;
+          hashElement.classList.remove('calculating');
+        }
+      } catch (error) {
+        const hashElement = document.getElementById(`hash-${fileId}`);
+        if (hashElement) {
+          hashElement.textContent = 'Error: ' + error.message;
+          hashElement.style.color = '#c00';
+        }
+      }
+      
+      // Enable request button
+      document.getElementById('requestBtn').disabled = false;
+    }
+
+    // Remove file (expose to window for onclick handler)
+    window.removeFile = function(fileId) {
+      selectedFiles = selectedFiles.filter(f => f.id !== fileId);
+      const itemDiv = document.getElementById(`file-${fileId}`);
+      if (itemDiv) {
+        itemDiv.remove();
+      }
+      
+      if (selectedFiles.length === 0) {
+        fileListDiv.classList.add('hidden');
+        document.getElementById('requestBtn').disabled = true;
+      }
+    };
+
+    // Expose functions to window for onclick handlers
+    window.requestUpload = async function() {
+      if (selectedFiles.length === 0) {
+        return;
+      }
+
+      const messageDiv = document.getElementById('message');
+      messageDiv.innerHTML = '<div class="message">Preparing upload request...</div>';
+      
+      try {
+        const fileItem = selectedFiles[0];
+        
+        // Wait for hash calculation if not ready
+        if (!fileItem.hash) {
+          messageDiv.innerHTML = '<div class="message">Waiting for hash calculation...</div>';
+          // Wait up to 60 seconds (for very large files)
+          for (let i = 0; i < 120; i++) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            if (fileItem.hash) break;
+          }
+          if (!fileItem.hash) {
+            throw new Error('Hash calculation timeout');
+          }
+        }
+        
+        fileHash = fileItem.hash;
+        
+        // Send upload request
+        const response = await fetch('/request-upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: fileItem.file.name,
+            size: fileItem.file.size,
+            hash: fileHash,
+            createdAt: fileItem.file.lastModified,
+            modifiedAt: fileItem.file.lastModified,
+          })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          uploadId = result.uploadId;
+          document.getElementById('selectSection').classList.add('hidden');
+          document.getElementById('verificationSection').classList.remove('hidden');
+          messageDiv.innerHTML = '<div class="message success">✅ Upload request sent! Enter the verification code shown on the receiver.</div>';
+        } else {
+          messageDiv.innerHTML = '<div class="message error">❌ ' + (result.message || 'Request failed') + '</div>';
+        }
+      } catch (error) {
+        messageDiv.innerHTML = '<div class="message error">❌ Request failed: ' + error.message + '</div>';
+      }
+    };
+
+    window.uploadFile = async function() {
+      const code = document.getElementById('verificationCode').value.trim();
+      const messageDiv = document.getElementById('message');
+      
+      if (code.length !== 6) {
+        messageDiv.innerHTML = '<div class="message error">Please enter a 6-digit code</div>';
+        return;
+      }
+
+      if (selectedFiles.length === 0 || !uploadId || !fileHash) {
+        messageDiv.innerHTML = '<div class="message error">No file selected or upload not requested</div>';
+        return;
+      }
+
+      const selectedFile = selectedFiles[0].file;
+      const progressDiv = document.getElementById('progress');
+      const progressFill = document.getElementById('progressFill');
+      const progressText = document.getElementById('progressText');
+
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+
+      try {
+        progressDiv.classList.remove('hidden');
+        messageDiv.innerHTML = '';
+
+        const xhr = new XMLHttpRequest();
+
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) {
+            const percent = Math.round((e.loaded / e.total) * 100);
+            progressFill.style.width = percent + '%';
+            progressFill.textContent = percent + '%';
+            progressText.textContent = `Uploading: ${formatFileSize(e.loaded)} / ${formatFileSize(e.total)} (${percent}%)`;
+          }
+        });
+
+        xhr.addEventListener('load', () => {
+          if (xhr.status === 200) {
+            const result = JSON.parse(xhr.responseText);
+            messageDiv.innerHTML = '<div class="message success">✅ Upload successful!</div>';
+            progressText.textContent = 'Upload complete!';
+            // Reset
+            fileInput.value = '';
+            selectedFiles = [];
+            uploadId = null;
+            fileHash = null;
+            setTimeout(() => {
+              progressDiv.classList.add('hidden');
+              document.getElementById('verificationSection').classList.add('hidden');
+              document.getElementById('selectSection').classList.remove('hidden');
+              fileListDiv.classList.add('hidden');
+              fileListDiv.innerHTML = '';
+              document.getElementById('requestBtn').disabled = true;
+            }, 2000);
+          } else {
+            const result = JSON.parse(xhr.responseText);
+            messageDiv.innerHTML = '<div class="message error">❌ ' + (result.message || 'Upload failed') + '</div>';
+            progressDiv.classList.add('hidden');
+          }
+        });
+
+        xhr.addEventListener('error', () => {
+          messageDiv.innerHTML = '<div class="message error">❌ Upload failed: Network error</div>';
+          progressDiv.classList.add('hidden');
+        });
+
+        xhr.open('POST', '/upload');
+        xhr.setRequestHeader('X-Upload-Id', uploadId);
+        xhr.setRequestHeader('X-Verification-Code', code);
+        xhr.setRequestHeader('X-File-Hash', fileHash);
+        xhr.send(formData);
+      } catch (error) {
+        messageDiv.innerHTML = '<div class="message error">❌ Upload failed: ' + error.message + '</div>';
+        progressDiv.classList.add('hidden');
+      }
+    };
+
+    // Allow Enter key to submit verification
+    document.getElementById('verificationCode')?.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') window.uploadFile();
+    });
+  </script>
+</body>
+</html>

@@ -220,8 +220,11 @@ export default class Send extends Command {
         this.log(chalk.white(`   ⌨️ CLI: Select this device and enter code ${chalk.yellow.bold(verificationCode)}`));
         this.log(chalk.white(`   🌐 Web: Open ${chalk.bold.underline.cyan(`http://${localIPs[0]}:${serverPort}`)} and enter code`));
       } else {
-        this.log(chalk.yellow('\n🔓 Verification is DISABLED - Direct access allowed'));
-        this.log(chalk.cyan('\n📱 Receivers can connect via:'));
+        this.log(chalk.red.bold('⚠️  SECURITY WARNING: Verification is DISABLED!'));
+        this.log(chalk.red('⚠️  Anyone on your network can download this file without permission!'));
+        this.log(chalk.red('⚠️  Only use this in trusted networks!\n'));
+        
+        this.log(chalk.cyan('📱 Receivers can connect via:'));
         this.log(chalk.white(`   ⌨️ CLI: Select this device (no code required)`));
         this.log(chalk.white(`   🌐 Web: Open ${chalk.bold.underline.cyan(`http://${localIPs[0]}:${serverPort}/${fileMetadata.name}`)} to download directly`));
       }
