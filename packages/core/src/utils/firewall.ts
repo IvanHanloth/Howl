@@ -1,6 +1,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as sudoPrompt from '@vscode/sudo-prompt';
+import { DebugLogger } from './logger';
 
 const execAsync = promisify(exec);
 
@@ -14,6 +15,7 @@ const execAsync = promisify(exec);
  * 3. Ports are properly allowed for LAN access
  */
 export class FirewallHelper {
+  private static readonly logger = new DebugLogger('FirewallHelper');
   private static readonly RULE_NAME = 'Howl File Transfer';
   private static readonly RULE_NAME_PREFIX = 'Howl File Transfer - Port';
   private static readonly PORT_RANGE_START = 40000;
@@ -52,18 +54,18 @@ export class FirewallHelper {
    */
   private static execWithSudo(command: string): Promise<{ stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
-      console.log('[FirewallHelper] Executing command with elevated privileges...');
-      console.log('[FirewallHelper] Command:', command);
+      this.logger.debug('Executing command with elevated privileges...');
+      this.logger.debug('Command:', command);
       
       sudoPrompt.exec(
         command,
         this.SUDO_OPTIONS,
         (error: Error | undefined, stdout: string | Buffer | undefined, stderr: string | Buffer | undefined) => {
           if (error) {
-            console.error('[FirewallHelper] Elevated command failed:', error.message);
+            this.logger.debug('Elevated command failed:', error.message);
             reject(error);
           } else {
-            console.log('[FirewallHelper] Elevated command succeeded');
+            this.logger.debug('Elevated command succeeded');
             resolve({
               stdout: stdout ? stdout.toString() : '',
               stderr: stderr ? stderr.toString() : '',
@@ -84,16 +86,16 @@ export class FirewallHelper {
     }
 
     try {
-      console.log(`[FirewallHelper] Checking if rule "${this.RULE_NAME}" exists...`);
+      this.logger.debug(`Checking if rule "${this.RULE_NAME}" exists...`);
       const { stdout } = await execAsync(
         `netsh advfirewall firewall show rule name="${this.RULE_NAME}"`,
         { windowsHide: true }
       );
       const exists = stdout.includes(this.RULE_NAME);
-      console.log(`[FirewallHelper] Rule exists: ${exists}`);
+      this.logger.debug(`Rule exists: ${exists}`);
       return exists;
     } catch (error) {
-      console.log('[FirewallHelper] Rule does not exist or error checking:', error instanceof Error ? error.message : 'unknown');
+      this.logger.debug('Rule does not exist or error checking:', error instanceof Error ? error.message : 'unknown');
       return false;
     }
   }
@@ -109,12 +111,12 @@ export class FirewallHelper {
       return true; // Non-Windows systems don't need firewall rules
     }
 
-    console.log(`[FirewallHelper] Checking if port ${port} is allowed...`);
+    this.logger.debug(`Checking if port ${port} is allowed...`);
 
     // Check if port is in default range and main rule exists
     if (port >= this.PORT_RANGE_START && port <= this.PORT_RANGE_END) {
       const hasMainRule = await this.ruleExists();
-      console.log(`[FirewallHelper] Port ${port} in default range, main rule exists: ${hasMainRule}`);
+      this.logger.debug(`Port ${port} in default range, main rule exists: ${hasMainRule}`);
       return hasMainRule;
     }
 
@@ -126,10 +128,10 @@ export class FirewallHelper {
         { windowsHide: true }
       );
       const exists = stdout.includes(ruleName) && stdout.includes(port.toString());
-      console.log(`[FirewallHelper] Specific rule for port ${port} exists: ${exists}`);
+      this.logger.debug(`Specific rule for port ${port} exists: ${exists}`);
       return exists;
     } catch (error) {
-      console.log(`[FirewallHelper] No specific rule for port ${port}`);
+      this.logger.debug(`No specific rule for port ${port}`);
       return false;
     }
   }
@@ -153,12 +155,12 @@ export class FirewallHelper {
     }
 
     try {
-      console.log(`[FirewallHelper] Attempting to add firewall rule for port range ${this.PORT_RANGE_START}-${this.PORT_RANGE_END}...`);
+      this.logger.debug(`Attempting to add firewall rule for port range ${this.PORT_RANGE_START}-${this.PORT_RANGE_END}...`);
       
       // Check if rule already exists
       const exists = await this.ruleExists();
       if (exists) {
-        console.log('[FirewallHelper] Rule already exists');
+        this.logger.debug('Rule already exists');
         return {
           success: true,
           message: `Firewall rule already exists for ports ${this.PORT_RANGE_START}-${this.PORT_RANGE_END}`,
@@ -168,7 +170,7 @@ export class FirewallHelper {
       // Add new rule for port range using sudo-prompt for UAC elevation
       const command = `netsh advfirewall firewall add rule name="${this.RULE_NAME}" dir=in action=allow protocol=TCP localport=${this.PORT_RANGE_START}-${this.PORT_RANGE_END} enable=yes profile=private,public`;
       
-      console.log('[FirewallHelper] Triggering UAC prompt...');
+      this.logger.debug('Triggering UAC prompt...');
       
       try {
         await this.execWithSudo(command);
@@ -179,7 +181,7 @@ export class FirewallHelper {
           throw new Error('Rule was not added successfully');
         }
         
-        console.log('[FirewallHelper] Firewall rule added successfully');
+        this.logger.debug('Firewall rule added successfully');
         return {
           success: true,
           message: `Firewall rule added for ports ${this.PORT_RANGE_START}-${this.PORT_RANGE_END}`,
@@ -216,18 +218,18 @@ export class FirewallHelper {
     }
 
     try {
-      console.log(`[FirewallHelper] Attempting to add firewall rule for port ${port}...`);
+      this.logger.debug(`Attempting to add firewall rule for port ${port}...`);
       
       // Check if port is already in default range
       if (port >= this.PORT_RANGE_START && port <= this.PORT_RANGE_END) {
-        console.log(`[FirewallHelper] Port ${port} is in default range, using main rule`);
+        this.logger.debug(`Port ${port} is in default range, using main rule`);
         return await this.addRule();
       }
 
       // Check if custom port rule already exists
       const exists = await this.hasRuleForPort(port);
       if (exists) {
-        console.log(`[FirewallHelper] Rule already exists for port ${port}`);
+        this.logger.debug(`Rule already exists for port ${port}`);
         return {
           success: true,
           message: `Firewall rule already exists for port ${port}`,
@@ -238,7 +240,7 @@ export class FirewallHelper {
       const ruleName = `${this.RULE_NAME_PREFIX} ${port}`;
       const command = `netsh advfirewall firewall add rule name="${ruleName}" dir=in action=allow protocol=TCP localport=${port} enable=yes profile=private,public`;
       
-      console.log('[FirewallHelper] Triggering UAC prompt...');
+      this.logger.debug('Triggering UAC prompt...');
       
       try {
         await this.execWithSudo(command);
@@ -249,7 +251,7 @@ export class FirewallHelper {
           throw new Error('Rule was not added successfully');
         }
         
-        console.log(`[FirewallHelper] Firewall rule added successfully for port ${port}`);
+        this.logger.debug(`Firewall rule added successfully for port ${port}`);
         return {
           success: true,
           message: `Firewall rule added for port ${port}`,
@@ -295,7 +297,7 @@ export class FirewallHelper {
     needsManualConfig: boolean;
   }> {
     if (!this.isWindows()) {
-      console.log('[FirewallHelper] Not Windows, skipping firewall configuration');
+      this.logger.debug('Not Windows, skipping firewall configuration');
       return {
         success: true,
         uacTriggered: false,
@@ -304,12 +306,12 @@ export class FirewallHelper {
       };
     }
 
-    console.log(`[FirewallHelper] Ensuring port ${port} is allowed in firewall...`);
+    this.logger.debug(`Ensuring port ${port} is allowed in firewall...`);
 
     // Check if Windows Firewall is enabled
     const firewallEnabled = await this.isFirewallEnabled();
     if (!firewallEnabled) {
-      console.log('[FirewallHelper] Windows Firewall is disabled');
+      this.logger.debug('Windows Firewall is disabled');
       return {
         success: true,
         uacTriggered: false,
@@ -318,12 +320,12 @@ export class FirewallHelper {
       };
     }
 
-    console.log('[FirewallHelper] Windows Firewall is enabled, checking rules...');
+    this.logger.debug('Windows Firewall is enabled, checking rules...');
 
     // Check if port already has a rule
     const hasRule = await this.hasRuleForPort(port);
     if (hasRule) {
-      console.log(`[FirewallHelper] Port ${port} already has a firewall rule`);
+      this.logger.debug(`Port ${port} already has a firewall rule`);
       return {
         success: true,
         uacTriggered: false,
@@ -332,7 +334,7 @@ export class FirewallHelper {
       };
     }
 
-    console.log(`[FirewallHelper] Port ${port} does not have a firewall rule, adding...`);
+    this.logger.debug(`Port ${port} does not have a firewall rule, adding...`);
 
     // Add rule (will trigger UAC)
     const addResult = (port >= this.PORT_RANGE_START && port <= this.PORT_RANGE_END)
@@ -350,7 +352,7 @@ export class FirewallHelper {
 
     // If adding rule failed, check if it was cancelled by user
     if (addResult.message.includes('cancelled')) {
-      console.log('[FirewallHelper] User cancelled UAC prompt');
+      this.logger.debug('User cancelled UAC prompt');
       return {
         success: false,
         uacTriggered: true,
@@ -360,7 +362,7 @@ export class FirewallHelper {
     }
 
     // Other error
-    console.error('[FirewallHelper] Failed to add firewall rule:', addResult.message);
+    this.logger.error('Failed to add firewall rule:', addResult.message);
     return {
       success: false,
       uacTriggered: true,
@@ -466,7 +468,7 @@ Or use Windows Defender Firewall with Advanced Security:
       }
       
       // Otherwise, continue to search for available port
-      console.log(`[FirewallHelper] Preferred port ${preferredPort} is busy, searching for alternatives...`);
+      this.logger.debug(`Preferred port ${preferredPort} is busy, searching for alternatives...`);
     }
 
     // Try default port 40000 first
@@ -482,10 +484,10 @@ Or use Windows Defender Firewall with Advanced Security:
     }
 
     // If no port in range is available, continue searching beyond
-    console.warn(`[FirewallHelper] No available port in range ${this.PORT_RANGE_START}-${this.PORT_RANGE_END}, searching beyond...`);
+    this.logger.warn(`No available port in range ${this.PORT_RANGE_START}-${this.PORT_RANGE_END}, searching beyond...`);
     for (let port = this.PORT_RANGE_END + 1; port <= 65535; port++) {
       if (await isPortAvailable(port)) {
-        console.warn(`[FirewallHelper] Using port ${port} outside default range`);
+        this.logger.warn(`Using port ${port} outside default range`);
         return port;
       }
     }
@@ -548,10 +550,10 @@ Or use Windows Defender Firewall with Advanced Security:
       
       // Use regex parsing instead of substring/text matching
       const isEnabled = this.parseFirewallState(stdout);
-      console.log(`[FirewallHelper] Firewall enabled: ${isEnabled}`);
+      this.logger.debug(`Firewall enabled: ${isEnabled}`);
       return isEnabled;
     } catch (error) {
-      console.error('[FirewallHelper] Failed to check firewall status:', error instanceof Error ? error.message : 'unknown');
+      this.logger.error('Failed to check firewall status:', error instanceof Error ? error.message : 'unknown');
       return false;
     }
   }

@@ -1,9 +1,10 @@
-import { EventEmitter } from 'events';
 import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as crypto from 'crypto';
 import { FileMetadata, TransferProgress, VerificationResponse } from '../types';
+import { BaseHttpServer } from './base-http-server';
+import { VerificationManager } from '../utils/verification-manager';
+import { FileUtils } from '../utils/file-utils';
 
 /**
  * Upload request information
@@ -15,7 +16,7 @@ interface UploadRequest {
   hash: string;
   createdAt: number;
   modifiedAt: number;
-  verificationCode: string;
+  verificationManager: VerificationManager;
   timestamp: number;
   verified: boolean;
 }
@@ -24,27 +25,17 @@ interface UploadRequest {
  * LAN Receiver - HTTP Client for file download and HTTP Server for file upload
  * Supports resumable downloads with Range requests and file uploads with two-stage verification
  */
-export class LanReceiver extends EventEmitter {
+export class LanReceiver extends BaseHttpServer {
   private sessionToken?: string;
   // Server-side properties for receiving uploads
-  private server?: http.Server;
-  private port: number = 0;
   private uploadCount: number = 0;
   private maxUploads: number = 0; // 0 means unlimited
-  private activeConnections: Set<http.IncomingMessage> = new Set();
   private uploadDir: string = './downloads';
   // Track pending upload requests
   private pendingUploads: Map<string, UploadRequest> = new Map();
 
   constructor() {
-    super();
-  }
-
-  /**
-   * Generate a 6-digit verification code for a specific upload
-   */
-  private generateVerificationCode(): string {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+    super(0);
   }
 
   /**
@@ -52,7 +43,7 @@ export class LanReceiver extends EventEmitter {
    */
   setMaxUploads(max: number): void {
     this.maxUploads = max;
-    console.log(`[LanReceiver] Max uploads set to: ${max === 0 ? 'unlimited' : max}`);
+    this.logger.debug(`Max uploads set to: ${max === 0 ? 'unlimited' : max}`);
   }
 
   /**
@@ -70,10 +61,7 @@ export class LanReceiver extends EventEmitter {
    * Calculate SHA-256 hash of a file
    */
   private calculateFileHash(filePath: string): string {
-    const fileBuffer = fs.readFileSync(filePath);
-    const hashSum = crypto.createHash('sha256');
-    hashSum.update(fileBuffer);
-    return hashSum.digest('hex');
+    return FileUtils.calculateFileHash(filePath);
   }
 
   /**
@@ -268,10 +256,163 @@ export class LanReceiver extends EventEmitter {
    * Parse filename from Content-Disposition header
    */
   private parseFileName(disposition?: string): string | null {
-    if (!disposition) return null;
+    return FileUtils.parseFileName(disposition);
+  }
 
-    const match = disposition.match(/filename="?([^"]+)"?/);
-    return match ? match[1] : null;
+  /**
+   * Upload file to a receiver server
+   * This is used when this device acts as a sender connecting to a receiver
+   */
+  async upload(
+    host: string,
+    port: number,
+    filePath: string,
+    verificationCode: string
+  ): Promise<void> {
+    // Read file
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    const fileName = path.basename(filePath);
+    
+    // Calculate file hash
+    const fileHash = this.calculateFileHash(filePath);
+    
+    // Get file timestamps
+    const createdAt = stat.birthtimeMs;
+    const modifiedAt = stat.mtimeMs;
+
+    // Stage 1: Request upload
+    const requestData = JSON.stringify({
+      filename: fileName,
+      size: fileSize,
+      hash: fileHash,
+      createdAt,
+      modifiedAt,
+    });
+
+    const uploadId = await new Promise<string>((resolve, reject) => {
+      const requestUrl = `http://${host}:${port}/request-upload`;
+      const options: http.RequestOptions = {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(requestData),
+        },
+      };
+
+      const request = http.request(requestUrl, options, res => {
+        let data = '';
+
+        res.on('data', chunk => {
+          data += chunk;
+        });
+
+        res.on('end', () => {
+          try {
+            const result = JSON.parse(data);
+            if (result.success && result.uploadId) {
+              resolve(result.uploadId);
+            } else {
+              reject(new Error(result.message || 'Failed to request upload'));
+            }
+          } catch (err) {
+            reject(new Error('Failed to parse upload request response'));
+          }
+        });
+      });
+
+      request.on('error', reject);
+      request.write(requestData);
+      request.end();
+    });
+
+    // Stage 2: Upload file with verification code
+    const boundary = `----HowlUploadBoundary${Date.now()}`;
+    const fileData = fs.readFileSync(filePath);
+    
+    // Build multipart form data
+    const parts: Buffer[] = [];
+    
+    // Add file part
+    parts.push(Buffer.from(`--${boundary}\r\n`));
+    parts.push(Buffer.from(`Content-Disposition: form-data; name="file"; filename="${fileName}"\r\n`));
+    parts.push(Buffer.from('Content-Type: application/octet-stream\r\n\r\n'));
+    parts.push(fileData);
+    parts.push(Buffer.from('\r\n'));
+    parts.push(Buffer.from(`--${boundary}--\r\n`));
+    
+    const body = Buffer.concat(parts);
+
+    return new Promise((resolve, reject) => {
+      const uploadUrl = `http://${host}:${port}/upload`;
+      const options: http.RequestOptions = {
+        method: 'POST',
+        headers: {
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'Content-Length': body.length,
+          'X-Upload-Id': uploadId,
+          'X-Verification-Code': verificationCode,
+          'X-File-Hash': fileHash,
+        },
+      };
+
+      const request = http.request(uploadUrl, options, res => {
+        let data = '';
+
+        res.on('data', chunk => {
+          data += chunk;
+        });
+
+        res.on('end', () => {
+          try {
+            const result = JSON.parse(data);
+            if (result.success) {
+              this.emit('completed', { fileName });
+              resolve();
+            } else {
+              reject(new Error(result.message || 'Upload failed'));
+            }
+          } catch (err) {
+            reject(new Error('Failed to parse upload response'));
+          }
+        });
+      });
+
+      request.on('error', reject);
+      
+      // Track progress
+      let transferred = 0;
+      const startTime = Date.now();
+      const chunkSize = 64 * 1024; // 64KB chunks
+      
+      const writeChunk = (offset: number) => {
+        if (offset >= body.length) {
+          request.end();
+          return;
+        }
+        
+        const chunk = body.slice(offset, Math.min(offset + chunkSize, body.length));
+        transferred += chunk.length;
+        
+        const progress = {
+          fileId: fileName,
+          fileName,
+          transferred,
+          total: body.length,
+          percentage: (transferred / body.length) * 100,
+          speed: ((transferred / (Date.now() - startTime)) * 1000),
+          eta: ((body.length - transferred) / ((transferred / (Date.now() - startTime)) * 1000)),
+        };
+        
+        this.emit('progress', progress);
+        
+        request.write(chunk, () => {
+          writeChunk(offset + chunkSize);
+        });
+      };
+      
+      writeChunk(0);
+    });
   }
 
   /**
@@ -282,7 +423,7 @@ export class LanReceiver extends EventEmitter {
     // Stop server if running
     if (this.server) {
       this.stopServer().catch(err => {
-        console.error('[LanReceiver] Error stopping server:', err);
+        this.logger.error('Error stopping server:', err);
       });
     }
   }
@@ -296,120 +437,29 @@ export class LanReceiver extends EventEmitter {
       fs.mkdirSync(this.uploadDir, { recursive: true });
     }
 
-    return new Promise((resolve, reject) => {
-      this.server = http.createServer((req, res) => {
-        // Track active connections
-        this.activeConnections.add(req);
-        
-        req.on('end', () => {
-          this.activeConnections.delete(req);
-        });
-        
-        req.on('close', () => {
-          this.activeConnections.delete(req);
-        });
-
-        this.handleUploadRequest(req, res).catch(err => {
-          console.error('[LanReceiver] Request error:', err);
-          this.activeConnections.delete(req);
-          res.statusCode = 500;
-          res.end('Internal Server Error');
-        });
-      });
-
-      this.server.on('error', reject);
-
-      // Bind to 0.0.0.0 to allow LAN access
-      this.server.listen(defaultPort, '0.0.0.0', () => {
-        const addr = this.server?.address();
-        this.port = typeof addr === 'object' && addr ? addr.port : 0;
-        console.log(`[LanReceiver] HTTP server started on 0.0.0.0:${this.port}`);
-        this.emit('server-started', this.port);
-        resolve(this.port);
-      });
-    });
-  }
-
-  /**
-   * Get the server port
-   */
-  getPort(): number {
-    return this.port;
+    this.defaultPort = defaultPort;
+    return await super.startServer();
   }
 
   /**
    * Stop the HTTP server
    */
   async stopServer(): Promise<void> {
-    return new Promise((resolve) => {
-      if (!this.server) {
-        this.cleanupServer();
-        resolve();
-        return;
-      }
-
-      console.log('[LanReceiver] Stopping server...');
-
-      // Force close after 1 second
-      const forceCloseTimer = setTimeout(() => {
-        console.log('[LanReceiver] Force closing server');
-        
-        // Close all active connections immediately
-        for (const req of this.activeConnections) {
-          try {
-            if (!req.socket.destroyed) {
-              req.socket.destroy();
-            }
-          } catch (err) {
-            // Ignore errors during forced shutdown
-          }
-        }
-        this.activeConnections.clear();
-        
-        // Force cleanup and resolve
-        this.cleanupServer();
-        resolve();
-      }, 1000);
-
-      // Try graceful close first
-      this.server.close(err => {
-        clearTimeout(forceCloseTimer);
-        if (err) {
-          console.log('[LanReceiver] Server close error (ignoring):', err.message);
-        } else {
-          console.log('[LanReceiver] HTTP server stopped gracefully');
-        }
-        this.cleanupServer();
-        resolve();
-      });
-
-      // Immediately try to destroy connections for faster shutdown
-      for (const req of this.activeConnections) {
-        try {
-          if (!req.socket.destroyed) {
-            req.socket.destroy();
-          }
-        } catch (err) {
-          // Ignore errors
-        }
-      }
-    });
+    await super.stopServer();
   }
 
   /**
-   * Internal cleanup method
+   * Cleanup method override
    */
-  private cleanupServer(): void {
-    this.server = undefined;
+  protected cleanup(): void {
+    super.cleanup();
     this.pendingUploads.clear();
-    this.activeConnections.clear();
-    this.emit('server-stopped');
   }
 
   /**
    * Handle HTTP upload requests
    */
-  private async handleUploadRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  protected async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const url = req.url || '/';
 
     // Root endpoint - show upload page
@@ -487,9 +537,11 @@ export class LanReceiver extends EventEmitter {
           return;
         }
 
-        // Generate unique upload ID and verification code
+        // Generate unique upload ID and verification manager for this upload
+        const crypto = require('crypto');
         const uploadId = crypto.randomBytes(16).toString('hex');
-        const verificationCode = this.generateVerificationCode();
+        const verificationManager = new VerificationManager();
+        const verificationCode = verificationManager.getCode();
 
         // Store pending upload request
         const uploadRequest: UploadRequest = {
@@ -499,7 +551,7 @@ export class LanReceiver extends EventEmitter {
           hash,
           createdAt: createdAt || Date.now(),
           modifiedAt: modifiedAt || Date.now(),
-          verificationCode,
+          verificationManager,
           timestamp: Date.now(),
           verified: false,
         };
@@ -507,7 +559,7 @@ export class LanReceiver extends EventEmitter {
         this.pendingUploads.set(uploadId, uploadRequest);
 
         const clientIp = req.socket.remoteAddress || 'unknown';
-        console.log(`[LanReceiver] Upload request from ${clientIp}: ${filename} (${size} bytes, hash: ${hash.substring(0, 8)}...)`);
+        this.logger.debug(`Upload request from ${clientIp}: ${filename} (${size} bytes, hash: ${hash.substring(0, 8)}...)`);
 
         // Emit event for CLI to display
         this.emit('upload-requested', {
@@ -534,7 +586,7 @@ export class LanReceiver extends EventEmitter {
         for (const [id, upload] of this.pendingUploads.entries()) {
           if (upload.timestamp < fiveMinutesAgo && !upload.verified) {
             this.pendingUploads.delete(id);
-            console.log(`[LanReceiver] Cleaned up expired upload request: ${id}`);
+            this.logger.debug(`Cleaned up expired upload request: ${id}`);
           }
         }
       } catch (error) {
@@ -570,8 +622,9 @@ export class LanReceiver extends EventEmitter {
     }
 
     // Verify the code
-    if (uploadRequest.verificationCode !== verificationCode) {
-      console.log(`[LanReceiver] Verification failed from ${clientIp} (invalid code)`);
+    const result = uploadRequest.verificationManager.verifyAndCreateSession(verificationCode);
+    if (!result.valid) {
+      this.logger.debug(`Verification failed from ${clientIp} (invalid code)`);
       this.emit('verification-failed', { uploadId, filename: uploadRequest.filename, clientIp });
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, message: 'Invalid verification code' }));
@@ -580,7 +633,7 @@ export class LanReceiver extends EventEmitter {
 
     // Verify the hash matches the initial request
     if (uploadRequest.hash !== fileHash) {
-      console.log(`[LanReceiver] Hash mismatch from ${clientIp}`);
+      this.logger.debug(`Hash mismatch from ${clientIp}`);
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, message: 'File hash does not match initial request' }));
       return;
@@ -588,7 +641,7 @@ export class LanReceiver extends EventEmitter {
 
     // Mark as verified
     uploadRequest.verified = true;
-    console.log(`[LanReceiver] Verification successful from ${clientIp}, receiving file...`);
+    this.logger.debug(`Verification successful from ${clientIp}, receiving file...`);
     this.emit('upload-verified', { uploadId, filename: uploadRequest.filename, clientIp });
 
     // Parse multipart form data
@@ -599,7 +652,7 @@ export class LanReceiver extends EventEmitter {
       return;
     }
 
-    const boundary = this.extractBoundary(contentType);
+    const boundary = FileUtils.extractBoundary(contentType);
     if (!boundary) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, message: 'Invalid multipart boundary' }));
@@ -607,7 +660,7 @@ export class LanReceiver extends EventEmitter {
     }
 
     try {
-      const fileData = await this.parseMultipartUpload(req, boundary);
+      const fileData = await FileUtils.parseMultipartUpload(req, boundary);
       
       if (!fileData.filename) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -624,7 +677,7 @@ export class LanReceiver extends EventEmitter {
       if (uploadedFileHash !== uploadRequest.hash) {
         // Hash mismatch - delete file and reject
         fs.unlinkSync(filePath);
-        console.error(`[LanReceiver] File hash verification failed after upload from ${clientIp}`);
+        this.logger.error(`File hash verification failed after upload from ${clientIp}`);
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, message: 'File integrity check failed' }));
         return;
@@ -653,7 +706,7 @@ export class LanReceiver extends EventEmitter {
         maxUploads: this.maxUploads || '∞',
       });
 
-      console.log(`[LanReceiver] File uploaded successfully: ${fileMetadata.name} from ${clientIp}`);
+      this.logger.debug(`File uploaded successfully: ${fileMetadata.name} from ${clientIp}`);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ 
@@ -670,7 +723,7 @@ export class LanReceiver extends EventEmitter {
         });
       }
     } catch (error) {
-      console.error('[LanReceiver] Upload error:', error);
+      this.logger.error('Upload error:', error);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ 
         success: false, 
@@ -680,97 +733,9 @@ export class LanReceiver extends EventEmitter {
   }
 
   /**
-   * Extract boundary from Content-Type header
+   * Get log prefix for base class
    */
-  private extractBoundary(contentType: string): string | null {
-    const match = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/);
-    return match ? (match[1] || match[2]) : null;
-  }
-
-  /**
-   * Parse multipart form data upload
-   */
-  private async parseMultipartUpload(req: http.IncomingMessage, boundary: string): Promise<{
-    filename: string;
-    contentType: string;
-    data: Buffer;
-  }> {
-    return new Promise((resolve, reject) => {
-      const chunks: Buffer[] = [];
-      
-      req.on('data', (chunk: Buffer) => {
-        chunks.push(chunk);
-      });
-
-      req.on('end', () => {
-        try {
-          const buffer = Buffer.concat(chunks);
-          const boundaryBuffer = Buffer.from(`--${boundary}`);
-          
-          // Find file part
-          const parts = this.splitBuffer(buffer, boundaryBuffer);
-          
-          for (const part of parts) {
-            if (part.length === 0) continue;
-            
-            // Find header/body separator
-            const separator = Buffer.from('\r\n\r\n');
-            const separatorIndex = part.indexOf(separator);
-            
-            if (separatorIndex === -1) continue;
-            
-            const headerBuffer = part.slice(0, separatorIndex);
-            const bodyBuffer = part.slice(separatorIndex + 4);
-            
-            const headers = headerBuffer.toString('utf-8');
-            
-            // Check if this is a file field
-            const filenameMatch = headers.match(/filename="([^"]+)"/);
-            if (!filenameMatch) continue;
-            
-            const filename = filenameMatch[1];
-            const contentTypeMatch = headers.match(/Content-Type: (.+)/i);
-            const contentType = contentTypeMatch ? contentTypeMatch[1].trim() : 'application/octet-stream';
-            
-            // Remove trailing boundary markers
-            let data = bodyBuffer;
-            const endBoundary = Buffer.from('\r\n');
-            if (data.slice(-2).equals(endBoundary)) {
-              data = data.slice(0, -2);
-            }
-            
-            resolve({ filename, contentType, data });
-            return;
-          }
-          
-          reject(new Error('No file found in upload'));
-        } catch (error) {
-          reject(error);
-        }
-      });
-
-      req.on('error', reject);
-    });
-  }
-
-  /**
-   * Split buffer by delimiter
-   */
-  private splitBuffer(buffer: Buffer, delimiter: Buffer): Buffer[] {
-    const parts: Buffer[] = [];
-    let start = 0;
-    let index = buffer.indexOf(delimiter);
-    
-    while (index !== -1) {
-      parts.push(buffer.slice(start, index));
-      start = index + delimiter.length;
-      index = buffer.indexOf(delimiter, start);
-    }
-    
-    if (start < buffer.length) {
-      parts.push(buffer.slice(start));
-    }
-    
-    return parts;
+  protected getLogPrefix(): string {
+    return 'LanReceiver';
   }
 }

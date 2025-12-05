@@ -10,7 +10,9 @@ import {
   generatePeerId,
   FileMetadata,
   FirewallHelper,
+  DebugLogger,
 } from '@howl/core';
+import { CliUI } from '../utils/ui-helper';
 
 /**
  * Send command - Send files via LAN or P2P
@@ -54,6 +56,10 @@ export default class Send extends Command {
       description: 'Skip automatic firewall configuration (Windows only)',
       default: false,
     }),
+    dev: Flags.boolean({
+      description: 'Enable debug logging (shows detailed internal messages)',
+      default: false,
+    }),
   };
 
   static args = {
@@ -65,6 +71,12 @@ export default class Send extends Command {
 
   async run(): Promise<void> {
     const { args, flags } = await this.parse(Send);
+    
+    // Enable debug logging if --dev flag is set
+    if (flags.dev) {
+      DebugLogger.setDebugMode(true);
+    }
+    
     const filePath = path.resolve(args.file as string);
 
     // Validate file exists
@@ -80,10 +92,8 @@ export default class Send extends Command {
     // Determine transfer mode
     const mode = flags.lan ? 'lan' : flags.mode;
 
-    this.log(chalk.cyan('🚀 howl - File Transfer\n'));
-    this.log(chalk.gray(`File: ${path.basename(filePath)}`));
-    this.log(chalk.gray(`Size: ${this.formatBytes(stat.size)}`));
-    this.log(chalk.gray(`Mode: ${mode}\n`));
+    CliUI.showBanner('send');
+    CliUI.showFileInfo(path.basename(filePath), stat.size);
 
     if (mode === 'lan' || mode === 'auto') {
       await this.sendViaLan(filePath, stat.size, flags.port, flags.name, flags.downloads, flags['no-verification'], flags['skip-firewall']);
@@ -198,46 +208,76 @@ export default class Send extends Command {
       discovery.advertise(peerId, deviceName, serverPort, {
         fileName: fileMetadata.name,
         fileSize: fileSize.toString(),
+        role: 'sender',
       });
 
       spinner.succeed('Broadcasting on local network');
 
-      this.log(chalk.green('\n🚀 Ready to receive connections'));
-      this.log(chalk.gray('Waiting for receivers...\n'));
-
-
       // Get local IP addresses
-      // Get local IP addresses using improved helper function
       const { getLocalIpAddresses } = require('@howl/core');
       const localIPs = getLocalIpAddresses();
-      // Display verification code prominently (if verification is enabled)
+      
+      // Show security warning if verification is disabled
       if (!noVerification) {
-        this.log(chalk.cyan('='.repeat(50)));
-        this.log(chalk.cyan.bold('\n  🔐 Verification Code: ') + chalk.yellow.bold(verificationCode) + '\n');
-        this.log(chalk.cyan('='.repeat(50)));
-
-        this.log(chalk.cyan('\n📱 Receivers can connect via:'));
-        this.log(chalk.white(`   ⌨️ CLI: Select this device and enter code ${chalk.yellow.bold(verificationCode)}`));
-        this.log(chalk.white(`   🌐 Web: Open ${chalk.bold.underline.cyan(`http://${localIPs[0]}:${serverPort}`)} and enter code`));
+        CliUI.showServerInfo({
+          mode: 'send',
+          port: serverPort,
+          verificationCode,
+          localIPs,
+          filename: fileMetadata.name,
+          verificationEnabled: true,
+        });
       } else {
-        this.log(chalk.red.bold('⚠️  SECURITY WARNING: Verification is DISABLED!'));
-        this.log(chalk.red('⚠️  Anyone on your network can download this file without permission!'));
-        this.log(chalk.red('⚠️  Only use this in trusted networks!\n'));
-        
-        this.log(chalk.cyan('📱 Receivers can connect via:'));
-        this.log(chalk.white(`   ⌨️ CLI: Select this device (no code required)`));
-        this.log(chalk.white(`   🌐 Web: Open ${chalk.bold.underline.cyan(`http://${localIPs[0]}:${serverPort}/${fileMetadata.name}`)} to download directly`));
+        CliUI.showSecurityWarning();
+        CliUI.showServerInfo({
+          mode: 'send',
+          port: serverPort,
+          localIPs,
+          filename: fileMetadata.name,
+          verificationEnabled: false,
+        });
       }
 
-      // Show alternative IPs if there are multiple
-      if (localIPs.length > 1) {
-        this.log(chalk.gray(`\n📡 Alternative addresses (if above doesn't work):`));
-        for (const ip of localIPs.slice(1, 3)) { // Show max 2 alternatives
-          this.log(chalk.gray(`   🌐 http://${ip}:${serverPort}`));
+      CliUI.showConnectionInstructions('send');
+
+      CliUI.showWaiting('send');
+
+      // Start searching for receivers in background
+      const receivers: Map<string, any> = new Map();
+      let firstReceiverFoundTime: number | null = null;
+      let searchTimedOut = false;
+
+      discovery.on('service-up', (service: any) => {
+        if (service.txt?.role === 'receiver') {
+          receivers.set(service.id, service);
+          CliUI.showProgressInfo(`Found: ${service.txt?.name || service.name} (${service.host}:${service.port})`, 'success');
+          
+          // Mark when first receiver is found
+          if (!firstReceiverFoundTime) {
+            firstReceiverFoundTime = Date.now();
+          }
         }
-      }
+      });
 
-      this.log(chalk.gray('\nPress Ctrl+C to stop\n'));
+      discovery.on('service-down', (service: any) => {
+        if (service.txt?.role === 'receiver') {
+          receivers.delete(service.id);
+          CliUI.showProgressInfo(`Receiver left: ${service.txt?.name || service.name}`, 'info');
+        }
+      });
+
+      // Check if 3 seconds passed since first receiver found
+      const checkSearchTimeout = setInterval(() => {
+        if (firstReceiverFoundTime && Date.now() - firstReceiverFoundTime >= 3000 && !searchTimedOut) {
+          searchTimedOut = true;
+          clearInterval(checkSearchTimeout);
+          
+          // Show selection menu
+          this.showReceiverSelectionMenu(receivers, discovery, filePath, sender).catch(err => {
+            console.error('[Send] Error in selection menu:', err);
+          });
+        }
+      }, 100);
 
       // Setup progress bar
       progressBar = new cliProgress.SingleBar(
@@ -339,7 +379,7 @@ export default class Send extends Command {
             progressBar.stop();
             progressStarted = false;
           }
-          this.log(chalk.green(`\n✅ Transfer completed! (${data.downloadCount}/${data.maxDownloads})`));
+          CliUI.showProgressInfo(`Transfer completed! (${data.downloadCount}/${data.maxDownloads})`, 'success');
           this.log(chalk.gray(`   Client: ${data.clientIp} | Type: ${data.transferType}`));
         } catch (err) {
           console.error('[Send] Error in transfer-completed handler:', err);
@@ -348,7 +388,7 @@ export default class Send extends Command {
 
       sender.on('download-limit-reached', (data: any) => {
         try {
-          this.log(chalk.yellow(`\n🔔 Download limit reached (${data.currentCount}/${data.maxDownloads}). Shutting down...`));
+          CliUI.showProgressInfo(`Download limit reached (${data.currentCount}/${data.maxDownloads}). Shutting down...`, 'warning');
           sender.stop().then(() => {
             discovery.destroy();
             if (progressStarted && progressBar) {
@@ -409,6 +449,184 @@ export default class Send extends Command {
       }
       spinner.fail('Failed to start sender');
       throw error;
+    }
+  }
+
+  /**
+   * Show receiver selection menu
+   */
+  private async showReceiverSelectionMenu(
+    receivers: Map<string, any>,
+    discovery: LanDiscovery,
+    filePath: string,
+    sender: LanSender
+  ): Promise<void> {
+    if (receivers.size === 0) {
+      return;
+    }
+
+    const { default: prompts } = await import('prompts');
+    
+    // Show discovered receivers in a nice box
+    const devices = Array.from(receivers.values()).map((service: any) => ({
+      name: service.txt?.name || service.name,
+      ip: service.host,
+      port: service.port,
+    }));
+    
+    CliUI.showDiscoveryBox({
+      mode: 'send',
+      deviceCount: receivers.size,
+      devices,
+    });
+    
+    this.log(chalk.gray('You can select a receiver or press Ctrl+C to stay in server mode.\n'));
+
+    let selectedReceiver: any = null;
+
+    while (!selectedReceiver) {
+      const receiverArray = Array.from(receivers.values());
+      const choices = receiverArray.map((service: any) => ({
+        title: `${service.txt?.name || service.name}`,
+        description: `${service.host}:${service.port}`,
+        value: service,
+      }));
+
+      choices.push({
+        title: chalk.cyan('🔄 Search again (R)'),
+        description: 'Continue searching for more devices',
+        value: 'RESEARCH' as any,
+      });
+
+      this.log(chalk.cyan('📋 Select a receiver:\n'));
+
+      const response = await prompts({
+        type: 'select',
+        name: 'receiver',
+        message: 'Select a receiver:',
+        choices,
+      });
+
+      if (!response.receiver) {
+        // User cancelled - continue running server
+        this.log(chalk.yellow('\nCancelled. Server continues running...\n'));
+        return;
+      }
+
+      if (response.receiver === 'RESEARCH') {
+        this.log(chalk.cyan('\n🔍 Searching for more receivers...\n'));
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        continue;
+      }
+
+      selectedReceiver = response.receiver;
+    }
+
+    // User selected a receiver - stop server and connect
+    this.log(chalk.cyan('\n🔗 Connecting to receiver...'));
+    
+    // Stop the sender server
+    await sender.stop();
+    discovery.destroy();
+
+    // Prompt for verification code
+    this.log(chalk.cyan('\n🔐 Verification Required'));
+    this.log(chalk.gray('Ask the receiver to provide their verification code.\n'));
+    
+    const codeResponse = await prompts({
+      type: 'text',
+      name: 'code',
+      message: 'Enter the 6-digit verification code from the receiver:',
+      validate: (value: string) => {
+        const trimmed = value.trim();
+        if (trimmed.length !== 6) {
+          return 'Verification code must be 6 digits';
+        }
+        if (!/^\d{6}$/.test(trimmed)) {
+          return 'Verification code must contain only numbers';
+        }
+        return true;
+      },
+    });
+
+    if (!codeResponse.code) {
+      this.log(chalk.yellow('Cancelled'));
+      process.exit(0);
+    }
+
+    // Upload file to receiver
+    await this.uploadToReceiver(
+      selectedReceiver.host,
+      selectedReceiver.port,
+      filePath,
+      codeResponse.code.trim()
+    );
+
+    process.exit(0);
+  }
+
+  /**
+   * Upload file to receiver's HTTP server
+   */
+  private async uploadToReceiver(
+    host: string,
+    port: number,
+    filePath: string,
+    verificationCode: string
+  ): Promise<void> {
+    const { LanReceiver } = await import('@howl/core');
+    const receiver = new LanReceiver();
+
+    const uploadSpinner = ora('Uploading file to receiver...').start();
+
+    const progressBar = new cliProgress.SingleBar(
+      {
+        format:
+          'Upload |' +
+          chalk.cyan('{bar}') +
+          '| {percentage}% | {value}/{total} MB | Speed: {speed} | ETA: {eta}s',
+        barCompleteChar: '\u2588',
+        barIncompleteChar: '\u2591',
+        hideCursor: true,
+      },
+      cliProgress.Presets.shades_classic
+    );
+
+    let progressStarted = false;
+
+    receiver.on('progress', (progress: any) => {
+      if (!progressStarted) {
+        uploadSpinner.stop();
+        progressBar.start(Math.ceil(progress.total / 1024 / 1024), 0, {
+          speed: '0 MB/s',
+        });
+        progressStarted = true;
+      }
+
+      progressBar.update(Math.ceil(progress.transferred / 1024 / 1024), {
+        speed: this.formatSpeed(progress.speed),
+        eta: Math.ceil(progress.eta),
+      });
+    });
+
+    try {
+      await receiver.upload(host, port, filePath, verificationCode);
+      if (progressStarted) {
+        progressBar.stop();
+      } else {
+        uploadSpinner.stop();
+      }
+      this.log(chalk.green('\n✅ Upload completed!'));
+    } catch (error) {
+      if (progressStarted) {
+        progressBar.stop();
+      } else {
+        uploadSpinner.fail('Upload failed');
+      }
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.error(chalk.red(`Upload error: ${message}`));
+    } finally {
+      receiver.destroy();
     }
   }
 

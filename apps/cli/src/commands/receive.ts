@@ -11,7 +11,9 @@ import {
   ServiceInfo,
   TransferProgress,
   FirewallHelper,
+  DebugLogger,
 } from '@howl/core';
+import { CliUI } from '../utils/ui-helper';
 
 /**
  * Receive command - Receive files from another device
@@ -49,6 +51,10 @@ export default class Receive extends Command {
       description: 'Skip automatic firewall configuration (Windows only)',
       default: false,
     }),
+    dev: Flags.boolean({
+      description: 'Enable debug logging (shows detailed internal messages)',
+      default: false,
+    }),
   };
 
   static args = {
@@ -60,6 +66,12 @@ export default class Receive extends Command {
 
   async run(): Promise<void> {
     const { args, flags } = await this.parse(Receive);
+    
+    // Enable debug logging if --dev flag is set
+    if (flags.dev) {
+      DebugLogger.setDebugMode(true);
+    }
+    
     const outputDir = path.resolve(flags.output);
 
     // Ensure output directory exists
@@ -67,7 +79,7 @@ export default class Receive extends Command {
       fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    this.log(chalk.cyan('📥 howl - File Receiver\n'));
+    CliUI.showBanner('receive');
 
     // If room code provided, use WAN mode (P2P via signaling server)
     if (args.code) {
@@ -155,6 +167,146 @@ export default class Receive extends Command {
 
     // Show selection menu with re-search capability
     await this.showSelectionMenuWithResearch(discovery, services, outputDir);
+  }
+
+  /**
+   * Show sender selection menu
+   */
+  private async showSenderSelectionMenu(
+    senders: Map<string, ServiceInfo>,
+    discovery: LanDiscovery,
+    receiver: LanReceiver,
+    outputDir: string
+  ): Promise<void> {
+    if (senders.size === 0) {
+      return;
+    }
+
+    const { default: prompts } = await import('prompts');
+    
+    // Show discovered senders in a nice box
+    const devices = Array.from(senders.values()).map((service: ServiceInfo) => ({
+      name: service.txt?.name || service.name,
+      ip: service.host,
+      port: service.port,
+      fileName: service.txt?.fileName,
+      fileSize: this.formatBytes(parseInt(service.txt?.fileSize || '0', 10)),
+    }));
+    
+    CliUI.showDiscoveryBox({
+      mode: 'receive',
+      deviceCount: senders.size,
+      devices,
+    });
+    
+    this.log(chalk.gray('You can select a sender or press Ctrl+C to stay in server mode.\n'));
+
+    let selectedSender: ServiceInfo | null = null;
+
+    while (!selectedSender) {
+      const senderArray = Array.from(senders.values());
+      const choices = senderArray.map((service: ServiceInfo) => ({
+        title: `${service.txt?.name || service.name} - ${service.txt?.fileName || 'Unknown file'}`,
+        description: `${service.host}:${service.port} (${this.formatBytes(
+          parseInt(service.txt?.fileSize || '0', 10)
+        )})`,
+        value: service,
+      }));
+
+      choices.push({
+        title: chalk.cyan('🔄 Search again (R)'),
+        description: 'Continue searching for more devices',
+        value: 'RESEARCH' as any,
+      });
+
+      this.log(chalk.cyan('📋 Select a sender:\n'));
+
+      const response = await prompts({
+        type: 'select',
+        name: 'sender',
+        message: 'Select a sender:',
+        choices,
+      });
+
+      if (!response.sender) {
+        // User cancelled - continue running server
+        this.log(chalk.yellow('\nCancelled. Server continues running...\n'));
+        return;
+      }
+
+      if (response.sender === 'RESEARCH') {
+        this.log(chalk.cyan('\n🔍 Searching for more senders...\n'));
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        continue;
+      }
+
+      selectedSender = response.sender as ServiceInfo;
+    }
+
+    // User selected a sender - stop server and connect
+    this.log(chalk.cyan('\n🔗 Connecting to sender...'));
+    
+    // Stop the receiver server
+    await receiver.stopServer();
+    discovery.destroy();
+
+    // Prompt for verification code
+    this.log(chalk.cyan('\n🔐 Verification Required'));
+    const codeResponse = await prompts({
+      type: 'text',
+      name: 'code',
+      message: 'Enter the 6-digit verification code from the sender:',
+      validate: (value: string) => {
+        const trimmed = value.trim();
+        if (trimmed.length !== 6) {
+          return 'Verification code must be 6 digits';
+        }
+        if (!/^\d{6}$/.test(trimmed)) {
+          return 'Verification code must contain only numbers';
+        }
+        return true;
+      },
+    });
+
+    if (!codeResponse.code) {
+      this.log(chalk.yellow('Cancelled'));
+      process.exit(0);
+    }
+
+    // Verify and download
+    const verificationSpinner = ora('Verifying code...').start();
+    const downloadReceiver = new LanReceiver();
+    
+    try {
+      const verified = await downloadReceiver.verify(
+        selectedSender.host,
+        selectedSender.port,
+        codeResponse.code.trim()
+      );
+
+      if (!verified) {
+        verificationSpinner.fail('Invalid verification code');
+        this.log(chalk.red('Please check the code and try again.'));
+        process.exit(1);
+      }
+
+      verificationSpinner.succeed('Verification successful');
+    } catch (error) {
+      verificationSpinner.fail('Verification failed');
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.error(chalk.red(`Verification error: ${message}`));
+    }
+
+    // Download file
+    await this.downloadFileWithReceiver(
+      downloadReceiver,
+      selectedSender.host,
+      selectedSender.port,
+      selectedSender.txt?.fileName || 'download',
+      outputDir
+    );
+
+    process.exit(0);
   }
 
   /**
@@ -464,11 +616,7 @@ export default class Receive extends Command {
    * Format bytes to human-readable string
    */
   private formatBytes(bytes: number): string {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+    return CliUI.formatBytes(bytes);
   }
 
   /**
@@ -490,33 +638,90 @@ export default class Receive extends Command {
     maxUploads: number,
     skipFirewall: boolean = false
   ): Promise<void> {
-    this.log(chalk.cyan('🌐 Starting hybrid mode (HTTP + mDNS)...\n'));
+    CliUI.showProgressInfo('Starting hybrid mode (HTTP + mDNS)...', 'info');
+    console.log();
 
-    // Start HTTP server
+    // Start HTTP server first
     const receiver = await this.setupHttpServer(outputDir, requestedPort, maxUploads, skipFirewall);
     if (!receiver) {
       return; // Error already handled
     }
 
+    const serverPort = receiver.getPort();
+    const { generatePeerId } = require('@howl/core');
+    const peerId = generatePeerId();
+    const deviceName = require('os').hostname();
+
     // Start mDNS discovery in background
-    this.log(chalk.cyan('\n📡 Starting mDNS discovery in background...\n'));
+    console.log();
+    CliUI.showProgressInfo('Starting mDNS discovery and advertisement...', 'info');
+    console.log();
     const discovery = new LanDiscovery();
-    const services: Map<string, ServiceInfo> = new Map();
+    const senders: Map<string, ServiceInfo> = new Map();
+
+    // Advertise this receiver so senders can find it
+    discovery.advertise(peerId, deviceName, serverPort, {
+      role: 'receiver',
+    });
+    CliUI.showProgressInfo(`Broadcasting as receiver on port ${serverPort}`, 'success');
 
     discovery.on('service-up', (service: ServiceInfo) => {
-      services.set(service.id, service);
-      this.log(chalk.green(`📱 Sender discovered: ${chalk.bold(service.name)} (${service.host}:${service.port})`));
+      // Only show senders (role = sender)
+      if (service.txt?.role === 'sender') {
+        senders.set(service.id, service);
+        CliUI.showProgressInfo(
+          `Sender: ${service.name} - ${service.txt?.fileName || 'Unknown'} (${service.host}:${service.port})`,
+          'success'
+        );
+        
+        // Mark when first sender is found
+        if (!firstSenderFoundTime) {
+          firstSenderFoundTime = Date.now();
+        }
+      }
     });
 
     discovery.on('service-down', (service: ServiceInfo) => {
-      services.delete(service.id);
-      this.log(chalk.gray(`📴 Sender left: ${service.name}`));
+      if (service.txt?.role === 'sender') {
+        senders.delete(service.id);
+        CliUI.showProgressInfo(`Sender left: ${service.name}`, 'info');
+      }
     });
 
     discovery.startDiscovery();
 
-    this.log(chalk.gray('Both HTTP server and mDNS discovery are running.'));
-    this.log(chalk.gray('Users can upload via HTTP or you can connect to discovered senders.\n'));
+    // Get local IP addresses
+    const { getLocalIpAddresses } = require('@howl/core');
+    const localIPs = getLocalIpAddresses();
+    
+    CliUI.showServerInfo({
+      mode: 'receive',
+      port: serverPort,
+      localIPs,
+      verificationEnabled: true,
+    });
+    
+    CliUI.showConnectionInstructions('receive');
+    CliUI.showWaiting('receive');
+    this.log(chalk.gray('Senders can upload via HTTP or you can discover senders via mDNS.\n'));
+
+    // Start searching for senders in background
+    this.log(chalk.cyan('🔍 Searching for senders in background...\n'));
+    let firstSenderFoundTime: number | null = null;
+    let searchTimedOut = false;
+
+    // Check if 3 seconds passed since first sender found
+    const checkSearchTimeout = setInterval(() => {
+      if (firstSenderFoundTime && Date.now() - firstSenderFoundTime >= 3000 && !searchTimedOut) {
+        searchTimedOut = true;
+        clearInterval(checkSearchTimeout);
+        
+        // Show selection menu
+        this.showSenderSelectionMenu(senders, discovery, receiver, outputDir).catch(err => {
+          console.error('[Receive] Error in selection menu:', err);
+        });
+      }
+    }, 100);
 
     // Handle Ctrl+C gracefully
     const cleanup = async () => {

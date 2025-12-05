@@ -1,41 +1,31 @@
-import { EventEmitter } from 'events';
 import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 import { FileMetadata, TransferProgress, VerificationResponse } from '../types';
+import { BaseHttpServer } from './base-http-server';
+import { VerificationManager } from '../utils/verification-manager';
 
 /**
  * LAN Sender - HTTP Server for file transfer
  * Supports Range requests for streaming
  */
-export class LanSender extends EventEmitter {
-  private server?: http.Server;
+export class LanSender extends BaseHttpServer {
   private files: Map<string, FileMetadata> = new Map();
-  private port: number = 0;
-  private verificationCode: string = '';
-  private verifiedSessions: Set<string> = new Set();
+  private verificationManager: VerificationManager;
   private downloadCount: number = 0;
   private maxDownloads: number = 0; // 0 means unlimited
-  private activeConnections: Set<http.IncomingMessage> = new Set();
   private requireVerification: boolean = true; // Whether verification is required
 
-  constructor(private defaultPort: number = 0) {
-    super();
-    this.verificationCode = this.generateVerificationCode();
-  }
-
-  /**
-   * Generate a 6-digit verification code
-   */
-  private generateVerificationCode(): string {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+  constructor(defaultPort: number = 0) {
+    super(defaultPort);
+    this.verificationManager = new VerificationManager();
   }
 
   /**
    * Get the verification code
    */
   getVerificationCode(): string {
-    return this.verificationCode;
+    return this.verificationManager.getCode();
   }
 
   /**
@@ -43,7 +33,7 @@ export class LanSender extends EventEmitter {
    */
   setMaxDownloads(max: number): void {
     this.maxDownloads = max;
-    console.log(`[LanSender] Max downloads set to: ${max === 0 ? 'unlimited' : max}`);
+    this.logger.debug(`Max downloads set to: ${max === 0 ? 'unlimited' : max}`);
   }
 
   /**
@@ -51,7 +41,7 @@ export class LanSender extends EventEmitter {
    */
   setRequireVerification(required: boolean): void {
     this.requireVerification = required;
-    console.log(`[LanSender] Verification ${required ? 'enabled' : 'disabled'}`);
+    this.logger.debug(`Verification ${required ? 'enabled' : 'disabled'}`);
   }
 
   /**
@@ -69,44 +59,15 @@ export class LanSender extends EventEmitter {
 
     this.files.set(fileMetadata.id, fileMetadata);
 
-    return new Promise((resolve, reject) => {
-      this.server = http.createServer((req, res) => {
-        // Track active connections
-        this.activeConnections.add(req);
-        
-        req.on('end', () => {
-          this.activeConnections.delete(req);
-        });
-        
-        req.on('close', () => {
-          this.activeConnections.delete(req);
-        });
-
-        this.handleRequest(req, res).catch(err => {
-          console.error('[LanSender] Request error:', err);
-          this.activeConnections.delete(req);
-          res.statusCode = 500;
-          res.end('Internal Server Error');
-        });
-      });
-
-      this.server.on('error', reject);
-
-      // Bind to 0.0.0.0 to allow LAN access (not just localhost)
-      this.server.listen(this.defaultPort, '0.0.0.0', () => {
-        const addr = this.server?.address();
-        this.port = typeof addr === 'object' && addr ? addr.port : 0;
-        console.log(`[LanSender] HTTP server started on 0.0.0.0:${this.port}`);
-        this.emit('started', this.port);
-        resolve(this.port);
-      });
-    });
+    const port = await this.startServer();
+    this.emit('started', port);
+    return port;
   }
 
   /**
    * Handle HTTP requests with Range support
    */
-  private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  protected async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const url = req.url || '/';
     // Remove query string from URL before extracting file ID
     const urlPathOnly = url.split('?')[0];
@@ -174,7 +135,7 @@ export class LanSender extends EventEmitter {
       userAgent,
       timestamp: new Date().toISOString(),
     });
-    console.log(`[LanSender] Incoming connection from ${clientIp} (${transferType})`);
+    this.logger.debug(`Incoming connection from ${clientIp} (${transferType})`);
     
     // Try to find file by exact ID match or by filename
     let fileMetadata = this.files.get(fileId);
@@ -189,15 +150,15 @@ export class LanSender extends EventEmitter {
     }
     
     if (!fileMetadata || !fileMetadata.path) {
-      console.log(`[LanSender] File not found: ${fileId}`);
+      this.logger.debug(`File not found: ${fileId}`);
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('File not found');
       return;
     }
     
     // Check verification if required
-    if (requiresVerification && !this.isSessionVerified(token)) {
-      console.log(`[LanSender] Verification failed for ${clientIp} (${transferType})`);
+    if (requiresVerification && !this.verificationManager.isSessionVerified(token)) {
+      this.logger.debug(`Verification failed for ${clientIp} (${transferType})`);
       this.emit('verification-required', {
         transferType,
         clientIp,
@@ -213,9 +174,9 @@ export class LanSender extends EventEmitter {
     
     // Log successful verification or no-verification mode
     if (!requiresVerification) {
-      console.log(`[LanSender] Direct access allowed (verification disabled)`);
+      this.logger.debug('Direct access allowed (verification disabled)');
     } else {
-      console.log(`[LanSender] Verification successful for ${clientIp}`);
+      this.logger.debug(`Verification successful for ${clientIp}`);
     }
     
     // Check download limit before serving file
@@ -261,7 +222,7 @@ export class LanSender extends EventEmitter {
         clientIp,
         timestamp: new Date().toISOString(),
       });
-      console.log(`[LanSender] Transfer started: ${fileMetadata.name} to ${clientIp} (${transferType})`);
+      this.logger.debug(`Transfer started: ${fileMetadata.name} to ${clientIp} (${transferType})`);
 
       stream.on('data', (chunk: Buffer | string) => {
         const chunkLength = Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk);
@@ -320,7 +281,7 @@ export class LanSender extends EventEmitter {
         clientIp,
         timestamp: new Date().toISOString(),
       });
-      console.log(`[LanSender] Transfer started: ${fileMetadata.name} to ${clientIp} (${transferType})`);
+      this.logger.debug(`Transfer started: ${fileMetadata.name} to ${clientIp} (${transferType})`);
       
       let transferred = 0;
       const startTime = Date.now();
@@ -371,80 +332,20 @@ export class LanSender extends EventEmitter {
   }
 
   /**
-   * Get the server port
-   */
-  getPort(): number {
-    return this.port;
-  }
-
-  /**
    * Stop the HTTP server
    */
   async stop(): Promise<void> {
-    return new Promise((resolve) => {
-      if (!this.server) {
-        this.cleanup();
-        resolve();
-        return;
-      }
-
-      console.log('[LanSender] Stopping server...');
-
-      // Force close after 1 second (was 5 seconds)
-      const forceCloseTimer = setTimeout(() => {
-        console.log('[LanSender] Force closing server');
-        
-        // Close all active connections immediately
-        for (const req of this.activeConnections) {
-          try {
-            if (!req.socket.destroyed) {
-              req.socket.destroy();
-            }
-          } catch (err) {
-            // Ignore errors during forced shutdown
-          }
-        }
-        this.activeConnections.clear();
-        
-        // Force cleanup and resolve
-        this.cleanup();
-        resolve();
-      }, 1000);
-
-      // Try graceful close first
-      this.server.close(err => {
-        clearTimeout(forceCloseTimer);
-        if (err) {
-          console.log('[LanSender] Server close error (ignoring):', err.message);
-        } else {
-          console.log('[LanSender] HTTP server stopped gracefully');
-        }
-        this.cleanup();
-        resolve();
-      });
-
-      // Immediately try to destroy connections for faster shutdown
-      for (const req of this.activeConnections) {
-        try {
-          if (!req.socket.destroyed) {
-            req.socket.destroy();
-          }
-        } catch (err) {
-          // Ignore errors
-        }
-      }
-    });
+    await this.stopServer();
+    this.emit('stopped');
   }
 
   /**
-   * Internal cleanup method
+   * Cleanup method override
    */
-  private cleanup(): void {
-    this.server = undefined;
+  protected cleanup(): void {
+    super.cleanup();
     this.files.clear();
-    this.verifiedSessions.clear();
-    this.activeConnections.clear();
-    this.emit('stopped');
+    this.verificationManager.clearSessions();
   }
 
   /**
@@ -453,10 +354,9 @@ export class LanSender extends EventEmitter {
   destroy(): void {
     // Stop server and remove all listeners
     this.stop().catch(err => {
-      console.error('[LanSender] Error during destroy:', err);
+      this.logger.error('Error during destroy:', err);
     }).finally(() => {
       this.removeAllListeners();
-      this.cleanup();
     });
   }
 
@@ -488,10 +388,9 @@ export class LanSender extends EventEmitter {
         const data = JSON.parse(body);
         const code = data.code?.trim();
 
-        if (code === this.verificationCode) {
-          // Generate session token
-          const sessionToken = Math.random().toString(36).substring(2);
-          this.verifiedSessions.add(sessionToken);
+        const result = this.verificationManager.verifyAndCreateSession(code);
+        if (result.valid && result.sessionToken) {
+          const sessionToken = result.sessionToken;
 
           const response: VerificationResponse = {
             success: true,
@@ -503,7 +402,7 @@ export class LanSender extends EventEmitter {
           res.end(JSON.stringify(response));
 
           const clientIp = req.socket.remoteAddress || 'unknown';
-          console.log(`[LanSender] Verification successful from ${clientIp}`);
+          this.logger.debug(`Verification successful from ${clientIp}`);
           this.emit('verified', { code, sessionToken, clientIp });
         } else {
           const response: VerificationResponse = {
@@ -515,7 +414,7 @@ export class LanSender extends EventEmitter {
           res.end(JSON.stringify(response));
 
           const clientIp = req.socket.remoteAddress || 'unknown';
-          console.log(`[LanSender] Verification failed from ${clientIp} (invalid code: ${code})`);
+          this.logger.debug(`Verification failed from ${clientIp} (invalid code: ${code})`);
           this.emit('verification-failed', { code, clientIp });
         }
       } catch (error) {
@@ -526,10 +425,9 @@ export class LanSender extends EventEmitter {
   }
 
   /**
-   * Check if session is verified
+   * Get log prefix for base class
    */
-  private isSessionVerified(token?: string): boolean {
-    if (!token) return false;
-    return this.verifiedSessions.has(token);
+  protected getLogPrefix(): string {
+    return 'LanSender';
   }
 }
