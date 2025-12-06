@@ -33,9 +33,33 @@ export class LanReceiver extends BaseHttpServer {
   private uploadDir: string = './downloads';
   // Track pending upload requests
   private pendingUploads: Map<string, UploadRequest> = new Map();
+  // Verification mode control
+  private requirePerFileVerification: boolean = false;
+  private globalVerificationManager: VerificationManager | null = null;
 
   constructor() {
     super(0);
+  }
+
+  /**
+   * Set whether to require per-file verification codes
+   * If true, each upload gets a unique verification code
+   * If false, uses a single global verification code for all uploads
+   */
+  setRequirePerFileVerification(required: boolean): void {
+    this.requirePerFileVerification = required;
+    // Initialize global verification manager if not using per-file verification
+    if (!required && !this.globalVerificationManager) {
+      this.globalVerificationManager = new VerificationManager();
+      this.logger.debug(`Global verification code: ${this.globalVerificationManager.getCode()}`);
+    }
+  }
+
+  /**
+   * Get the global verification code (when not using per-file verification)
+   */
+  getGlobalVerificationCode(): string | null {
+    return this.globalVerificationManager?.getCode() || null;
   }
 
   /**
@@ -540,8 +564,25 @@ export class LanReceiver extends BaseHttpServer {
         // Generate unique upload ID and verification manager for this upload
         const crypto = require('crypto');
         const uploadId = crypto.randomBytes(16).toString('hex');
-        const verificationManager = new VerificationManager();
-        const verificationCode = verificationManager.getCode();
+        
+        // Choose verification manager based on mode
+        let verificationManager: VerificationManager;
+        let verificationCode: string;
+        
+        if (this.requirePerFileVerification) {
+          // Each upload gets its own verification code
+          verificationManager = new VerificationManager();
+          verificationCode = verificationManager.getCode();
+          this.logger.debug(`Generated per-file verification code for ${filename}: ${verificationCode}`);
+        } else {
+          // Use global verification code for all uploads
+          if (!this.globalVerificationManager) {
+            this.globalVerificationManager = new VerificationManager();
+          }
+          verificationManager = this.globalVerificationManager;
+          verificationCode = verificationManager.getCode();
+          this.logger.debug(`Using global verification code for ${filename}: ${verificationCode}`);
+        }
 
         // Store pending upload request
         const uploadRequest: UploadRequest = {

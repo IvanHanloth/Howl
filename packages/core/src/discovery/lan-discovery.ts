@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import Bonjour, { Service } from 'bonjour-service';
 import { ServiceInfo, PeerInfo, TransferMode } from '../types';
+import { DebugLogger } from '../utils/logger';
 
 /**
  * LAN Discovery using mDNS (Bonjour)
@@ -11,6 +12,7 @@ export class LanDiscovery extends EventEmitter {
   private publishedService?: Service;
   private browser?: ReturnType<Bonjour['find']>;
   private discoveredServices: Map<string, ServiceInfo> = new Map();
+  private logger: DebugLogger;
 
   private static readonly SERVICE_NAME = 'howl-share';
   private static readonly PROTOCOL = 'tcp';
@@ -18,6 +20,7 @@ export class LanDiscovery extends EventEmitter {
   constructor() {
     super();
     this.bonjour = new Bonjour();
+    this.logger = new DebugLogger('LanDiscovery');
   }
 
   /**
@@ -47,12 +50,12 @@ export class LanDiscovery extends EventEmitter {
     });
 
     this.publishedService.on('up', () => {
-      console.log(`[Discovery] Service advertised on port ${port}`);
+      this.logger.debug(`Service advertised on port ${port}`);
       this.emit('advertised', { port, peerId, name });
     });
 
     this.publishedService.on('error', (err: Error) => {
-      console.error('[Discovery] Advertisement error:', err);
+      this.logger.error('Advertisement error:', err);
       this.emit('error', err);
     });
   }
@@ -65,7 +68,7 @@ export class LanDiscovery extends EventEmitter {
       this.stopDiscovery();
     }
 
-    console.log('[Discovery] Starting service discovery...');
+    this.logger.debug('Starting service discovery...');
     // Enhanced configuration for better cross-platform discovery
     this.browser = this.bonjour.find({
       type: LanDiscovery.SERVICE_NAME,
@@ -76,7 +79,7 @@ export class LanDiscovery extends EventEmitter {
       const serviceInfo = this.parseService(service);
       if (serviceInfo) {
         this.discoveredServices.set(serviceInfo.id, serviceInfo);
-        console.log(`[Discovery] Found service: ${serviceInfo.name} at ${serviceInfo.host}:${serviceInfo.port}`);
+        this.logger.debug(`Found service: ${serviceInfo.name} at ${serviceInfo.host}:${serviceInfo.port}`);
         this.emit('service-up', serviceInfo);
       }
     });
@@ -85,7 +88,7 @@ export class LanDiscovery extends EventEmitter {
       const serviceInfo = this.parseService(service);
       if (serviceInfo) {
         this.discoveredServices.delete(serviceInfo.id);
-        console.log(`[Discovery] Service down: ${serviceInfo.name}`);
+        this.logger.debug(`Service down: ${serviceInfo.name}`);
         this.emit('service-down', serviceInfo);
       }
     });
@@ -102,7 +105,7 @@ export class LanDiscovery extends EventEmitter {
         this.browser.stop();
       }
       this.browser = undefined;
-      console.log('[Discovery] Stopped service discovery');
+      this.logger.debug('Stopped service discovery');
     }
   }
 
@@ -133,7 +136,7 @@ export class LanDiscovery extends EventEmitter {
     if (this.publishedService && typeof this.publishedService.stop === 'function') {
       this.publishedService.stop();
       this.publishedService = undefined;
-      console.log('[Discovery] Service unpublished');
+      this.logger.debug('Service unpublished');
     }
   }
 
@@ -168,7 +171,7 @@ export class LanDiscovery extends EventEmitter {
         txt,
       };
     } catch (error) {
-      console.error('[Discovery] Failed to parse service:', error);
+      this.logger.error('Failed to parse service:', error);
       return null;
     }
   }

@@ -190,7 +190,7 @@ export class FirewallHelper {
         // Check if user cancelled the UAC prompt
         const errorMsg = error?.message || '';
         if (errorMsg.includes('cancelled') || errorMsg.includes('User did not grant permission')) {
-          console.log('[FirewallHelper] User cancelled UAC prompt');
+          this.logger.info('User cancelled UAC prompt');
           return {
             success: false,
             message: 'User cancelled the permission request',
@@ -200,7 +200,7 @@ export class FirewallHelper {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      console.error('[FirewallHelper] Failed to add firewall rule:', message);
+      this.logger.error('Failed to add firewall rule:', message);
       return {
         success: false,
         message: `Failed to add firewall rule: ${message}`,
@@ -260,7 +260,7 @@ export class FirewallHelper {
         // Check if user cancelled the UAC prompt
         const errorMsg = error?.message || '';
         if (errorMsg.includes('cancelled') || errorMsg.includes('User did not grant permission')) {
-          console.log('[FirewallHelper] User cancelled UAC prompt');
+          this.logger.info('User cancelled UAC prompt');
           return {
             success: false,
             message: 'User cancelled the permission request',
@@ -270,7 +270,7 @@ export class FirewallHelper {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      console.error(`[FirewallHelper] Failed to add firewall rule for port ${port}:`, message);
+      this.logger.error(`Failed to add firewall rule for port ${port}:`, message);
       return {
         success: false,
         message: `Failed to add firewall rule: ${message}`,

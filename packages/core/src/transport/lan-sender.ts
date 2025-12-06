@@ -4,6 +4,7 @@ import * as path from 'path';
 import { FileMetadata, TransferProgress, VerificationResponse } from '../types';
 import { BaseHttpServer } from './base-http-server';
 import { VerificationManager } from '../utils/verification-manager';
+import { detectClientType } from '../index';
 
 /**
  * LAN Sender - HTTP Server for file transfer
@@ -113,20 +114,8 @@ export class LanSender extends BaseHttpServer {
     const clientIp = req.socket.remoteAddress || 'unknown';
     
     // Identify request type based on user agent
-    let transferType = 'unknown';
+    let transferType = detectClientType(userAgent);
     let requiresVerification = this.requireVerification;
-    
-    if (userAgent.includes('howl-cli')) {
-      transferType = 'CLI';
-      // CLI doesn't need verification by default
-    } else if (userAgent.includes('howl-client')) {
-      transferType = 'Client';
-      // Client apps need verification if enabled
-    } else {
-      // Browser request
-      transferType = 'Browser';
-      // Browser needs verification if enabled
-    }
     
     // Log incoming connection
     this.emit('connection', {

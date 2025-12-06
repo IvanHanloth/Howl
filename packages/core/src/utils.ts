@@ -301,3 +301,22 @@ export function parseRange(rangeHeader: string, totalSize: number): { start: num
     end: Math.min(end, totalSize - 1),
   };
 }
+
+/**
+ * Detect client type from User-Agent string
+ * @param userAgent - The User-Agent string from HTTP headers
+ * @returns Detected client type ("browser", "mobile", "desktop", "cli")
+ */
+
+export function detectClientType(userAgent: string): string {
+  const ua = userAgent.toLowerCase();
+    if (ua.includes('howl-cli')) {
+      return 'cli';
+    } else if (ua.includes('howl-client-desktop')) {
+      return 'desktop';
+    } else if (ua.includes('howl-client-mobile')){
+      return 'mobile';
+    }else {
+      return 'browser';
+    }
+}
